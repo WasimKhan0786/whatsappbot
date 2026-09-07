@@ -4,6 +4,12 @@ const WhitelistContact = require('../models/WhitelistContact');
 const { generateGeminiReply } = require('../services/geminiService');
 const { sendWhatsAppMessage } = require('../services/whatsappService');
 const { buildDynamicPersonaPrompt } = require('../services/personaService');
+const {
+  getGeminiChatHistory,
+  recordMessageExchange,
+  clearChatHistory,
+  getChatSessionStats,
+} = require('../services/chatHistoryService');
 const { normalizePhoneNumber } = require('./webhookController');
 
 /**
@@ -194,7 +200,8 @@ const simulateIncoming = async (req, res) => {
 
     // 3. Dynamic Persona & Isolated Style Prompt Generation
     const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, sender);
-    const replyText = await generateGeminiReply(messageText, dynamicPrompt);
+    const chatHistory = await getGeminiChatHistory(sender);
+    const replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
 
     // 4. WhatsApp Send (or simulation)
     const whatsappResult = await sendWhatsAppMessage(sender, replyText);
@@ -206,6 +213,13 @@ const simulateIncoming = async (req, res) => {
       messageOut: replyText,
       status: 'PROCESSED',
     });
+
+    // 6. Record to capped ChatSession history
+    try {
+      await recordMessageExchange(sender, messageText, replyText);
+    } catch (histErr) {
+      console.warn('Simulation history recording note:', histErr.message);
+    }
 
     return res.json({
       success: true,
@@ -231,10 +245,49 @@ const simulateIncoming = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/history/:sessionId
+ * Fetch recent chat history and stats for a given contact / session
+ */
+const getSessionHistory = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const stats = await getChatSessionStats(sessionId);
+    if (!stats) {
+      return res.json({
+        sessionId,
+        messageCount: 0,
+        messages: [],
+      });
+    }
+    return res.json(stats);
+  } catch (error) {
+    console.error('Error fetching session history:', error);
+    return res.status(500).json({ error: 'Failed to fetch session history' });
+  }
+};
+
+/**
+ * DELETE /api/history/:sessionId
+ * Clear chat history context for a given contact / session
+ */
+const clearSessionHistory = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    await clearChatHistory(sessionId);
+    return res.json({ success: true, message: `Chat history cleared for ${sessionId}` });
+  } catch (error) {
+    console.error('Error clearing session history:', error);
+    return res.status(500).json({ error: 'Failed to clear session history' });
+  }
+};
+
 module.exports = {
   getSettings,
   updateSettings,
   getLogs,
   clearLogs,
   simulateIncoming,
+  getSessionHistory,
+  clearSessionHistory,
 };

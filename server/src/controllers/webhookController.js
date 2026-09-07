@@ -3,6 +3,7 @@ const MessageLog = require("../models/MessageLog");
 const { generateGeminiReply } = require("../services/geminiService");
 const { checkActiveSchedule } = require("../services/scheduleService");
 const { sendWhatsAppMessage } = require("../services/whatsappService");
+const { getGeminiChatHistory, recordMessageExchange } = require("../services/chatHistoryService");
 
 /**
  * Normalizes phone numbers for comparison (removes all non-digit characters)
@@ -153,7 +154,8 @@ const handleIncoming = async (req, res) => {
     if (!replyText) {
       console.log(`🤖 Generating polite Gemini reply for ${sender}...`);
       try {
-        replyText = await generateGeminiReply(messageText, settings.systemPrompt);
+        const chatHistory = await getGeminiChatHistory(sender);
+        replyText = await generateGeminiReply(messageText, settings.systemPrompt, chatHistory);
       } catch (geminiErr) {
         console.error("Gemini error:", geminiErr.message);
         await MessageLog.create({
@@ -182,6 +184,13 @@ const handleIncoming = async (req, res) => {
         status: "PROCESSED",
         metaMessageId: messageId,
       });
+
+      // 6. Record to capped ChatSession history
+      try {
+        await recordMessageExchange(sender, messageText, replyText);
+      } catch (histErr) {
+        console.warn('History record err:', histErr.message);
+      }
 
       console.log(`✅ Successfully replied to ${sender}`);
       return res.status(200).json({ status: "success", replyText });

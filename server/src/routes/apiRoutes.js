@@ -6,6 +6,8 @@ const {
   getLogs,
   clearLogs,
   simulateIncoming,
+  getSessionHistory,
+  clearSessionHistory,
 } = require('../controllers/settingsController');
 
 const {
@@ -35,6 +37,10 @@ router.delete('/whitelist/:id/chat-style', clearChatStyle);
 // Message logs
 router.get('/logs', getLogs);
 router.delete('/logs', clearLogs);
+
+// Chat history session management
+router.get('/history/:sessionId', getSessionHistory);
+router.delete('/history/:sessionId', clearSessionHistory);
 
 const {
   getSchedules,

@@ -4,6 +4,7 @@ node_modules/
 # Environment secrets & API keys
 .env
 .env.*
+!.env.example
 .env.local
 *.env
 

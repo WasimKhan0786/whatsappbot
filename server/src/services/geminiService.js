@@ -6,7 +6,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
  * @param {string} customSystemPrompt - Optional prompt instructing persona and tone
  * @returns {Promise<string>} - Polite AI generated response
  */
-async function generateGeminiReply(userMessage, customSystemPrompt) {
+async function generateGeminiReply(userMessage, customSystemPrompt, chatHistory = []) {
   const apiKey = process.env.GEMINI_API_KEY;
 
   const defaultPrompt =
@@ -47,9 +47,30 @@ async function generateGeminiReply(userMessage, customSystemPrompt) {
         systemInstruction: systemInstruction,
       });
 
-      const result = await model.generateContent(userMessage);
-      const response = await result.response;
-      const replyText = response.text();
+      let replyText = '';
+
+      // If multi-turn chat history is provided, start a contextual chat session
+      if (Array.isArray(chatHistory) && chatHistory.length > 0) {
+        try {
+          const chat = model.startChat({
+            history: chatHistory,
+          });
+          const result = await chat.sendMessage(userMessage);
+          const response = await result.response;
+          replyText = response.text();
+        } catch (chatErr) {
+          console.warn(`[Gemini] Multi-turn chat failed on ${modelName} (${chatErr.message.substring(0, 60)}). Falling back to direct prompt...`);
+          // Fallback to direct generateContent if history format triggered an issue
+          const result = await model.generateContent(userMessage);
+          const response = await result.response;
+          replyText = response.text();
+        }
+      } else {
+        // Direct single-turn prompt
+        const result = await model.generateContent(userMessage);
+        const response = await result.response;
+        replyText = response.text();
+      }
 
       if (replyText && replyText.trim() !== '') {
         return replyText.trim();

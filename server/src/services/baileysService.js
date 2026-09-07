@@ -11,6 +11,7 @@ const fs = require('fs');
 const { generateGeminiReply } = require('./geminiService');
 const { checkActiveSchedule } = require('./scheduleService');
 const { buildDynamicPersonaPrompt, resolveContactPersona } = require('./personaService');
+const { getGeminiChatHistory, recordMessageExchange } = require('./chatHistoryService');
 const BotSettings = require('../models/BotSettings');
 const MessageLog = require('../models/MessageLog');
 const WhitelistContact = require('../models/WhitelistContact');
@@ -332,7 +333,8 @@ async function initBaileys(forceRestart = false) {
           // 4. If no active schedule matched, proceed with processing the message using Gemini AI with the isolated persona
           if (!replyText) {
             try {
-              replyText = await generateGeminiReply(messageText, dynamicPrompt);
+              const chatHistory = await getGeminiChatHistory(senderPhone);
+              replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
             } catch (aiErr) {
               console.warn(`[Baileys] Gemini generation fallback triggered:`, aiErr.message);
               if (persona.key === 'ROMANTIC') {
@@ -380,6 +382,13 @@ async function initBaileys(forceRestart = false) {
             });
           } catch (dbErr) {
             console.error('[Baileys] Error logging message to DB:', dbErr.message);
+          }
+
+          // Atomically record to capped ChatSession history
+          try {
+            await recordMessageExchange(senderPhone, messageText, replyText);
+          } catch (histErr) {
+            console.warn('[Baileys] Error recording chat history:', histErr.message);
           }
         } catch (msgErr) {
           console.error(`[Baileys] Error processing message from ${senderPhone}:`, msgErr.message);

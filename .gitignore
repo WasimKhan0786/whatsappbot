@@ -16,8 +16,10 @@ client/dist/
 *.env
 **/.env
 **/.env.*
+!**/.env.example
 server/.env
 server/.env.*
+!server/.env.example
 client/.env
 client/.env.*
 
