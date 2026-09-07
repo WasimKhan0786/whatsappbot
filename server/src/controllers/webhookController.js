@@ -12,6 +12,7 @@ const {
   recordFailedAttempt,
   resetFailedAttempts,
 } = require("../services/chatHistoryService");
+const { processGameTurn } = require("../services/gameService");
 const { buildDynamicPersonaPrompt } = require("../services/personaService");
 
 /**
@@ -186,6 +187,26 @@ const handleIncoming = async (req, res) => {
         console.error('Handover notification send error:', hErr.message);
       }
       return res.status(200).json({ status: 'agent_handoff_triggered', replyText: handoverReply });
+    }
+
+    // 2.7 Check if user is in game mode or triggering /game or /exit
+    const gameTurnResult = await processGameTurn(sender, messageText);
+    if (gameTurnResult.handled && gameTurnResult.replyText) {
+      console.log(`🎮 Game turn processed for ${sender}.`);
+      try {
+        await sendWhatsAppMessage(sender, gameTurnResult.replyText);
+        await MessageLog.create({
+          sender,
+          messageIn: messageText,
+          messageOut: gameTurnResult.replyText,
+          status: 'PROCESSED',
+          metaMessageId: messageId,
+        });
+        await recordMessageExchange(sender, messageText, gameTurnResult.replyText);
+        return res.status(200).json({ status: 'game_processed', replyText: gameTurnResult.replyText });
+      } catch (gErr) {
+        console.error('Game response send error:', gErr.message);
+      }
     }
 
     // 3. Check for active predefined schedule (e.g. Gym timing, Birthday event)

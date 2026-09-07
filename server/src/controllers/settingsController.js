@@ -18,6 +18,7 @@ const {
   getActiveHandoffs,
   resumeSession,
 } = require('../services/chatHistoryService');
+const { processGameTurn } = require('../services/gameService');
 const { normalizePhoneNumber } = require('./webhookController');
 
 /**
@@ -248,6 +249,26 @@ const simulateIncoming = async (req, res) => {
         success: true,
         status: 'AGENT_HANDOFF_TRIGGERED',
         replyText: handoverReply,
+        whatsappResult,
+        log,
+      });
+    }
+
+    // 2.7 Check if user is in game mode or triggering /game or /exit
+    const gameTurnResult = await processGameTurn(sender, messageText);
+    if (gameTurnResult.handled && gameTurnResult.replyText) {
+      const whatsappResult = await sendWhatsAppMessage(sender, gameTurnResult.replyText);
+      const log = await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: gameTurnResult.replyText,
+        status: 'PROCESSED',
+      });
+      await recordMessageExchange(sender, messageText, gameTurnResult.replyText);
+      return res.json({
+        success: true,
+        status: 'PROCESSED',
+        replyText: gameTurnResult.replyText,
         whatsappResult,
         log,
       });

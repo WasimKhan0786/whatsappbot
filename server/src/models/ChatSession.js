@@ -55,6 +55,32 @@ const chatSessionSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  gameState: {
+    active: {
+      type: Boolean,
+      default: false,
+    },
+    gameType: {
+      type: String,
+      default: null,
+    },
+    score: {
+      type: Number,
+      default: 0,
+    },
+    round: {
+      type: Number,
+      default: 0,
+    },
+    currentQuestion: {
+      type: String,
+      default: '',
+    },
+    startedAt: {
+      type: Date,
+      default: null,
+    },
+  },
   updatedAt: {
     type: Date,
     default: Date.now,

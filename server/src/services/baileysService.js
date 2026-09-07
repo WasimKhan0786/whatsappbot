@@ -20,6 +20,7 @@ const {
   recordFailedAttempt,
   resetFailedAttempts,
 } = require('./chatHistoryService');
+const { processGameTurn } = require('./gameService');
 const BotSettings = require('../models/BotSettings');
 const MessageLog = require('../models/MessageLog');
 const WhitelistContact = require('../models/WhitelistContact');
@@ -336,6 +337,31 @@ async function initBaileys(forceRestart = false) {
               });
               await recordMessageExchange(senderPhone, messageText, handoverReply);
             } catch (hErr) {}
+            continue;
+          }
+
+          // Check if user is in game mode or triggering game mode (/game, /exit, number pick, game turns)
+          const gameTurnResult = await processGameTurn(senderPhone, messageText);
+          if (gameTurnResult.handled && gameTurnResult.replyText) {
+            console.log(`[Baileys] 🎮 Game turn processed for ${senderPhone}. Sending response.`);
+            try {
+              await sock.readMessages([msg.key]);
+              await sock.sendPresenceUpdate('composing', senderJid);
+              await new Promise((resolve) => setTimeout(resolve, 800));
+              await sock.sendPresenceUpdate('paused', senderJid);
+              await sock.sendMessage(senderJid, { text: gameTurnResult.replyText });
+
+              await MessageLog.create({
+                sender: senderPhone,
+                messageIn: messageText,
+                messageOut: gameTurnResult.replyText,
+                status: 'PROCESSED',
+                metaMessageId: msg.key.id || `baileys_${Date.now()}`,
+              });
+              await recordMessageExchange(senderPhone, messageText, gameTurnResult.replyText);
+            } catch (gErr) {
+              console.error('[Baileys] Error sending game response:', gErr.message);
+            }
             continue;
           }
 
