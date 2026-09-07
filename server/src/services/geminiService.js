@@ -16,6 +16,7 @@ async function generateGeminiReply(userMessage, customSystemPrompt, chatHistory 
     '- Analyze the incoming message for its language, tone, and style, and generate a response that matches them perfectly, ensuring the interaction feels natural and consistent with the user\'s input.\n' +
     '- Language Mirroring: If the user writes in English, reply in natural fluent English. If they write in Hinglish, reply in Hinglish. If in Hindi (Devanagari script) or another language, reply in that exact script/language.\n' +
     '- Tone & Cadence Mirroring: Match the emotional register (casual banter, courteous respect, professional, or empathetic). Messages hamesha realistic aur short (1-2 sentences) rakho jaise aam log WhatsApp par type karte hain.\n' +
+    '- Provide short, precise, and clear answers to all general knowledge and informational questions, avoiding unnecessary details while ensuring accuracy and clarity.\n' +
     '- Agar koi "Assalam Walekum" ya "salam" bole, toh reply: "Walaikum Assalam bhai! Kaise ho? Boliye kya baat thi?".';
 
   const systemInstruction = customSystemPrompt || defaultPrompt;
