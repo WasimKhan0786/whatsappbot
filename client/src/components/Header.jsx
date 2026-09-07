@@ -1,11 +1,11 @@
-import React from 'react';
-import { Bot, RefreshCw, Send, Sparkles, Wifi, WifiOff } from 'lucide-react';
+import { Bot, KeyRound, RefreshCw, Send, Sparkles, Wifi, WifiOff } from 'lucide-react';
 
 export default function Header({
   isEnabled,
   serverOnline,
   onRefresh,
   onOpenSimulator,
+  onOpenEnvModal,
   refreshing,
 }) {
   return (
@@ -47,6 +47,17 @@ export default function Header({
           {serverOnline ? <Wifi size={14} /> : <WifiOff size={14} />}
           <span>{serverOnline ? 'Online' : 'Offline'}</span>
         </div>
+
+        {/* Environment & API Key Modal Button */}
+        <button
+          id="open-env-modal-btn"
+          className="btn-secondary"
+          onClick={onOpenEnvModal}
+          title="Update Gemini API Key or Upload .env"
+        >
+          <KeyRound size={14} color="#25D366" />
+          <span>API Key & .env</span>
+        </button>
 
         {/* Refresh Button */}
         <button

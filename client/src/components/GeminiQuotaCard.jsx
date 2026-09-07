@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Sparkles, Zap, Clock, ShieldCheck, RefreshCw, Activity, Cpu, AlertTriangle } from 'lucide-react';
+import { Sparkles, Zap, Clock, ShieldCheck, RefreshCw, Activity, Cpu, AlertTriangle, KeyRound } from 'lucide-react';
 
-export default function GeminiQuotaCard() {
+export default function GeminiQuotaCard({ onOpenEnvModal }) {
   const [quota, setQuota] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -88,14 +88,27 @@ export default function GeminiQuotaCard() {
           </div>
         </div>
 
-        <button
-          className={`refresh-icon-btn ${refreshing ? 'spinning' : ''}`}
-          onClick={handleManualRefresh}
-          title="Refresh Quota Status"
-          disabled={refreshing}
-        >
-          <RefreshCw size={16} />
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {onOpenEnvModal && (
+            <button
+              className="btn-secondary"
+              onClick={onOpenEnvModal}
+              style={{ padding: '5px 12px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6 }}
+              title="Update Gemini API Key or Upload .env"
+            >
+              <KeyRound size={13} color="#25D366" />
+              <span>Update Key</span>
+            </button>
+          )}
+          <button
+            className={`refresh-icon-btn ${refreshing ? 'spinning' : ''}`}
+            onClick={handleManualRefresh}
+            title="Refresh Quota Status"
+            disabled={refreshing}
+          >
+            <RefreshCw size={16} />
+          </button>
+        </div>
       </div>
 
       {/* Main Stats Grid */}

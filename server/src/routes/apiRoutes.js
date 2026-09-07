@@ -19,6 +19,11 @@ const {
 } = require('../controllers/whitelistController');
 
 const { getGeminiQuota } = require('../controllers/quotaController');
+const { getEnvConfig, updateEnvConfig } = require('../controllers/envController');
+
+// Dynamic Environment & API Key Management (Hot-reload without server reboot)
+router.get('/env', getEnvConfig);
+router.post('/env', updateEnvConfig);
 
 // Gemini Quota and Usage Metrics
 router.get('/quota', getGeminiQuota);

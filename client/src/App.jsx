@@ -10,6 +10,7 @@ import WhitelistManager from './components/WhitelistManager';
 import GeminiQuotaCard from './components/GeminiQuotaCard';
 import EventDetailsModal from './components/EventDetailsModal';
 import ScheduleManager from './components/ScheduleManager';
+import EnvConfigModal from './components/EnvConfigModal';
 
 export default function App() {
   const [settings, setSettings] = useState(null);
@@ -22,6 +23,7 @@ export default function App() {
   const [loadingLogs, setLoadingLogs] = useState(true);
   const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+  const [isEnvModalOpen, setIsEnvModalOpen] = useState(false);
   const [selectedStatTab, setSelectedStatTab] = useState('ALL');
 
   // Handle stat card click to open details modal
@@ -125,6 +127,7 @@ export default function App() {
         serverOnline={serverOnline}
         onRefresh={handleRefresh}
         onOpenSimulator={() => setIsSimulatorOpen(true)}
+        onOpenEnvModal={() => setIsEnvModalOpen(true)}
         refreshing={refreshing}
       />
 
@@ -132,7 +135,7 @@ export default function App() {
       <StatsBar stats={stats} onCardClick={handleStatCardClick} />
 
       {/* Google Gemini AI Quota & Daily Limit Monitor */}
-      <GeminiQuotaCard />
+      <GeminiQuotaCard onOpenEnvModal={() => setIsEnvModalOpen(true)} />
 
       {/* WhatsApp Web Direct QR Connect (No Meta Account Required) */}
       <WhatsAppWebCard />
@@ -180,6 +183,15 @@ export default function App() {
         logs={logs}
         onClearLogs={handleClearLogs}
         stats={stats}
+      />
+
+      {/* Dynamic .env Upload & Gemini API Key Management Modal */}
+      <EnvConfigModal
+        isOpen={isEnvModalOpen}
+        onClose={() => setIsEnvModalOpen(false)}
+        onSuccess={() => {
+          fetchSettings();
+        }}
       />
     </div>
   );

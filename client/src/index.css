@@ -2281,3 +2281,201 @@ body {
   }
 }
 
+/* ==========================================================================
+   Environment Configuration & API Key Modal Styles
+   ========================================================================== */
+.env-current-status-box {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(37, 211, 102, 0.2);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+
+.env-status-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.env-status-pill-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.code-pill {
+  font-family: var(--font-code);
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(37, 211, 102, 0.1);
+  color: #4ade80;
+  border: 1px solid rgba(37, 211, 102, 0.25);
+  word-break: break-all;
+}
+
+.env-input-with-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.btn-input-icon {
+  position: absolute;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: color 0.2s ease;
+}
+
+.btn-input-icon:hover {
+  color: var(--wa-green);
+}
+
+.env-dropzone {
+  border: 2px dashed rgba(37, 211, 102, 0.35);
+  border-radius: var(--radius-lg);
+  padding: 32px 20px;
+  text-align: center;
+  cursor: pointer;
+  background: rgba(15, 23, 42, 0.45);
+  transition: all 0.25s ease;
+}
+
+.env-dropzone:hover,
+.env-dropzone.dragging {
+  border-color: var(--wa-green);
+  background: rgba(37, 211, 102, 0.08);
+  box-shadow: 0 0 20px rgba(37, 211, 102, 0.15);
+}
+
+.dropzone-icon-wrap {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(37, 211, 102, 0.12);
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+}
+
+.env-dropzone:hover .dropzone-icon-wrap {
+  transform: scale(1.08);
+}
+
+.dropzone-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dropzone-title code {
+  font-family: var(--font-code);
+  color: var(--wa-green);
+  background: rgba(37, 211, 102, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.dropzone-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.dropzone-badge {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 0.72rem;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.env-preview-box {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  padding: 14px;
+}
+
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.parsed-keys-scroll {
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.parsed-key-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.78rem;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  font-family: var(--font-code);
+}
+
+.parsed-key-name {
+  color: #4ade80;
+  font-weight: 600;
+}
+
+.parsed-key-val {
+  color: var(--text-muted);
+}
+
+.env-overview-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.overview-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.overview-key {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.overview-val {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+
