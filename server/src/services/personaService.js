@@ -238,6 +238,105 @@ ${cappedChat}
  * @param {string} senderPhone - Sender phone number
  * @returns {string} - Tailored dynamic system prompt
 /**
+ * Shayari Categories & Keyword Taxonomy
+ */
+const SHAYARI_CATEGORIES = {
+  ROMANTIC: {
+    key: 'ROMANTIC',
+    label: 'Romantic & Love (इश्क़ / मोहब्बत / प्यार)',
+    keywords: /\b(romantic|love|pyaar|pyar|pyara|pyaara|ishq|mohabbat|deewana|deewani|shona|jaan|dilbar|husn|mehboob|mashuka|aashiqui|sanam|heart|dil ki baat)\b/i,
+    description: 'Sweet, passionate, tender, and deeply romantic shayari expressing love, affection, longing, and heartfelt romance.',
+  },
+  EMOTIONAL: {
+    key: 'EMOTIONAL',
+    label: 'Emotional, Sad & Heartbreak (दर्द / ग़म / तन्हाई / अहसास)',
+    keywords: /\b(emotional|sad|dard|gam|gham|bewafa|tanha|tanhaai|tanhai|judaai|judai|dil toot|tut gaya|ro|rone|aansu|ansu|zakhm|dukh|broken|heartbreak|udas|udaas)\b/i,
+    description: 'Deeply moving, sensitive, and poignant shayari capturing emotional pain, longing, nostalgia, sadness, or heartache.',
+  },
+  MOTIVATIONAL: {
+    key: 'MOTIVATIONAL',
+    label: 'Motivational & Inspirational (हौसला / हिम्मत / मंज़िल / जोश)',
+    keywords: /\b(motivational|motivation|inspire|inspirational|hausla|hosla|himmat|josh|kamyabi|kamiyabi|success|manzil|zindagi|mehnat|struggle|umeed|parwaz|koshish|haarna nahi|jeet|honsla)\b/i,
+    description: 'Empowering, spirited, and inspiring shayari fueling determination, resilience, ambition, courage, and triumph in life.',
+  },
+  ATTITUDE: {
+    key: 'ATTITUDE',
+    label: 'Attitude & Swag (तेवर / अंदाज़ / रुतबा)',
+    keywords: /\b(attitude|tevar|andaaz|andaz|swag|aukat|aukaat|badshah|king|babbar\s*sher|sher\s*dil|hawa|shaan|khuddari|apna time)\b/i,
+    description: 'Bold, confident, stylish, and impactful shayari reflecting self-respect, inner power, dignity, and unapologetic swagger.',
+  },
+  FRIENDSHIP: {
+    key: 'FRIENDSHIP',
+    label: 'Friendship & Dosti (दोस्ती / यारी / भाईचारा)',
+    keywords: /\b(dosti|dost|friend|friends|friendship|yaari|dostana|jigri|bhaichara|saccha\s*dost|saccha\s*yaar)\b/i,
+    description: 'Heartwarming, loyal, and lively shayari celebrating the bond, trust, laughter, and companionship of true friends.',
+  },
+  FUNNY: {
+    key: 'FUNNY',
+    label: 'Funny & Humorous (मज़ाकिया / हास्य)',
+    keywords: /\b(funny|hasya|mazaak|mazaq|joke|comedy|hasne|hasao|pagal|chutkula)\b/i,
+    description: 'Light-hearted, witty, playful, and funny shayari meant to bring a smile or laugh.',
+  },
+};
+
+/**
+ * Detects if an incoming message is requesting a shayari / sher / poetry,
+ * and classifies the specific requested category (romantic, emotional, motivational, etc.).
+ * @param {string} text - Incoming message text
+ * @returns {object} - Classification results { isShayari, categoryKey, categoryLabel, categoryDescription }
+ */
+function detectShayariRequest(text) {
+  if (!text || typeof text !== 'string') {
+    return { isShayari: false, categoryKey: null, categoryLabel: null, categoryDescription: null };
+  }
+
+  const clean = text.trim();
+  const lower = clean.toLowerCase();
+
+  // Primary triggers for shayari / poetry
+  const shayariTriggerRegex = /\b(shayari|sayari|shairi|shayri|sher|shayariyan|kavita|couplet|nazm|poetry|lines?)\b/i;
+  const isShayariDirect = shayariTriggerRegex.test(lower);
+
+  // Indirect requests (e.g., "kuch romantic sunao", "dard bhara likho", "kuch motivational sunao", "romantic lines bhejo")
+  const indirectIntent = /\b(kuch|koi|ek|apni)\s+(romantic|emotional|motivational|dard\s*bhari?|dosti\s*wali?|attitude\s*wali?|pyari?|achhi?)\s+(sunao|bhejo|likho|batao|de do)\b/i;
+  const isIndirect = indirectIntent.test(lower);
+
+  if (!isShayariDirect && !isIndirect) {
+    return { isShayari: false, categoryKey: null, categoryLabel: null, categoryDescription: null };
+  }
+
+  // Determine category
+  let matchedKey = 'GENERAL';
+
+  if (SHAYARI_CATEGORIES.ATTITUDE.keywords.test(lower)) {
+    matchedKey = 'ATTITUDE';
+  } else if (SHAYARI_CATEGORIES.MOTIVATIONAL.keywords.test(lower)) {
+    matchedKey = 'MOTIVATIONAL';
+  } else if (SHAYARI_CATEGORIES.EMOTIONAL.keywords.test(lower)) {
+    matchedKey = 'EMOTIONAL';
+  } else if (SHAYARI_CATEGORIES.ROMANTIC.keywords.test(lower)) {
+    matchedKey = 'ROMANTIC';
+  } else if (SHAYARI_CATEGORIES.FRIENDSHIP.keywords.test(lower)) {
+    matchedKey = 'FRIENDSHIP';
+  } else if (SHAYARI_CATEGORIES.FUNNY.keywords.test(lower)) {
+    matchedKey = 'FUNNY';
+  }
+
+  const categoryDetails = SHAYARI_CATEGORIES[matchedKey] || {
+    key: 'GENERAL',
+    label: 'Heartfelt & Classic (दिलकश और क्लासिक शायरी)',
+    description: 'Beautiful, timeless, and poetic shayari suited to general appreciation.',
+  };
+
+  return {
+    isShayari: true,
+    categoryKey: matchedKey,
+    categoryLabel: categoryDetails.label,
+    categoryDescription: categoryDetails.description,
+  };
+}
+
+/**
  * Analyzes an incoming WhatsApp message in real-time to detect its language, script, emotional tone, and cadence
  * @param {string} text - Incoming message text
  * @returns {object} - Detected language, script, tone, and cadence
@@ -394,6 +493,30 @@ Apply this specific persona and tone ONLY to this active conversation with ${con
 `;
   }
 
+  // Detect if incoming message is asking for a shayari / poetry
+  const shayariInfo = detectShayariRequest(incomingMessage);
+  let shayariDirective = '';
+  if (shayariInfo.isShayari) {
+    shayariDirective = `
+======================================================
+[SHAYARI & POETRY REQUEST IDENTIFIED - CATEGORY: ${shayariInfo.categoryKey}]
+- Requested Category: ${shayariInfo.categoryLabel}
+- Category Essence & Mood: ${shayariInfo.categoryDescription}
+
+SHAYARI GENERATION MANDATE:
+1. Identify the requested shayari category—such as romantic, emotional, or motivational—and generate a fitting shayari based on the user's specific choice.
+2. Provide a genuine, high-quality, authentic 2-liner (sher) or 4-liner shayari that exquisitely embodies the identified category: ${shayariInfo.categoryLabel}.
+3. Language & Script Matching:
+   - If the user wrote in Hinglish, write the shayari in natural, evocative conversational Hinglish.
+   - If the user wrote in Devanagari Hindi (हिन्दी), write the shayari in Devanagari Hindi script.
+   - If the user wrote in English, craft the shayari in evocative poetic English or clean Roman Hinglish.
+4. Natural Presentation:
+   - Present the shayari with warmth, natural elegance, and poetic flair.
+   - Deliver the lines directly without artificial AI disclaimers, lecturing, or robotic meta-explanations.
+======================================================
+`;
+  }
+
   // Append real-time adaptive mirroring directive for the active incoming message
   const adaptiveMirroringDirective = `
 ======================================================
@@ -418,17 +541,22 @@ CORE MIRRORING MANDATE:
 4. GENERAL KNOWLEDGE & INFORMATIONAL QUESTIONS MANDATE:
    - Provide short, precise, and clear answers to all general knowledge and informational questions, avoiding unnecessary details while ensuring accuracy and clarity.
    - Deliver direct, accurate answers without fluff, excessive preambles, or textbook lectures.
+5. SHAYARI & POETRY DIRECTIVE:
+   - Identify the requested shayari category—such as romantic, emotional, or motivational—and generate a fitting shayari based on the user's specific choice.
+   - Deliver authentic, rhythmic, and touching verses matching the requested category and user language without robotic preambles.
 ======================================================
 `;
 
-  return `${baseSystemPrompt || ''}\n\n${personaDirective}\n\n${adaptiveMirroringDirective}`;
+  return `${baseSystemPrompt || ''}\n\n${personaDirective}\n\n${adaptiveMirroringDirective}${shayariDirective ? `\n\n${shayariDirective}` : ''}`;
 }
 
 module.exports = {
   PERSONA_CONFIGS,
+  SHAYARI_CATEGORIES,
   resolveContactPersona,
   analyzeChatSample,
   analyzeIncomingMessageStyle,
+  detectShayariRequest,
   buildDynamicPersonaPrompt,
 };
 
