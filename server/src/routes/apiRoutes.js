@@ -6,6 +6,8 @@ const {
   getLogs,
   clearLogs,
   simulateIncoming,
+  getHandoffList,
+  resumeHandoffSession,
   getSessionHistory,
   clearSessionHistory,
 } = require('../controllers/settingsController');
@@ -46,6 +48,10 @@ router.delete('/logs', clearLogs);
 // Chat history session management
 router.get('/history/:sessionId', getSessionHistory);
 router.delete('/history/:sessionId', clearSessionHistory);
+
+// Live Agent Handoff & Paused Sessions Management
+router.get('/handoffs', getHandoffList);
+router.post('/handoffs/:sessionId/resume', resumeHandoffSession);
 
 const {
   getSchedules,

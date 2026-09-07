@@ -17,7 +17,15 @@ const messageLogSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['PROCESSED', 'IGNORED_PHONE_MISMATCH', 'BOT_DISABLED', 'ERROR', 'SIMULATED'],
+    enum: [
+      'PROCESSED',
+      'IGNORED_PHONE_MISMATCH',
+      'BOT_DISABLED',
+      'ERROR',
+      'SIMULATED',
+      'AGENT_HANDOFF_TRIGGERED',
+      'PAUSED_FOR_AGENT',
+    ],
     default: 'PROCESSED',
     index: true,
   },

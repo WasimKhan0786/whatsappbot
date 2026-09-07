@@ -206,6 +206,179 @@ async function getChatSessionStats(sessionId) {
   }
 }
 
+/**
+ * Checks if incoming text requests a live agent or real human
+ * @param {string} text - User message
+ * @returns {boolean}
+ */
+function detectAgentKeyword(text) {
+  if (!text || typeof text !== 'string') return false;
+  const clean = text.trim().toLowerCase();
+  const pattern = /\b(agent|human|live\s*agent|real\s*human|real\s*person|human\s*agent|support\s*agent|talk\s*to\s*human|connect\s*to\s*agent|customer\s*care|executive)\b/i;
+  return pattern.test(clean);
+}
+
+/**
+ * Check if automated responses are paused for this session due to live agent handover
+ * @param {string} sessionId - Phone number or session ID
+ * @returns {Promise<boolean>}
+ */
+async function isSessionHandedOff(sessionId) {
+  if (!sessionId) return false;
+  try {
+    const cleanSessionId = String(sessionId).trim();
+    const session = await ChatSession.findOne({ sessionId: cleanSessionId });
+    return Boolean(session && session.isHandedOff === true);
+  } catch (err) {
+    console.error(`[ChatHistoryService] Error checking handoff status for ${sessionId}:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * Activates live agent handover for a chat session, immediately pausing automated replies
+ * @param {string} sessionId - Phone number or session ID
+ * @param {string} reason - 'KEYWORD_AGENT' | 'KEYWORD_HUMAN' | 'MAX_FAILED_ATTEMPTS'
+ * @returns {Promise<object|null>}
+ */
+async function activateHandover(sessionId, reason = 'KEYWORD_AGENT') {
+  if (!sessionId) return null;
+  try {
+    const cleanSessionId = String(sessionId).trim();
+    console.log(`🚨 [LiveAgentHandover] Pausing automated replies for ${cleanSessionId} (Reason: ${reason})`);
+
+    const updated = await ChatSession.findOneAndUpdate(
+      { sessionId: cleanSessionId },
+      {
+        $set: {
+          isHandedOff: true,
+          handedOffAt: new Date(),
+          handoverReason: reason,
+          updatedAt: new Date(),
+        },
+      },
+      { upsert: true, new: true }
+    );
+
+    return updated;
+  } catch (err) {
+    console.error(`[ChatHistoryService] Error activating handover for ${sessionId}:`, err.message);
+    return null;
+  }
+}
+
+/**
+ * Records a failed/unresolved query attempt.
+ * If consecutive unresolved attempts reach 3, automatically triggers live agent handover.
+ * @param {string} sessionId - Phone number or session ID
+ * @returns {Promise<{ triggeredHandover: boolean, attempts: number }>}
+ */
+async function recordFailedAttempt(sessionId) {
+  if (!sessionId) return { triggeredHandover: false, attempts: 0, unresolvedAttempts: 0 };
+  try {
+    const cleanSessionId = String(sessionId).trim();
+    const session = await ChatSession.findOne({ sessionId: cleanSessionId });
+    const currentAttempts = (session?.unresolvedAttempts || 0) + 1;
+
+    if (currentAttempts >= 3) {
+      await ChatSession.updateOne(
+        { sessionId: cleanSessionId },
+        {
+          $set: {
+            unresolvedAttempts: currentAttempts,
+            isHandedOff: true,
+            handedOffAt: new Date(),
+            handoverReason: 'MAX_FAILED_ATTEMPTS',
+            updatedAt: new Date(),
+          },
+        },
+        { upsert: true }
+      );
+      console.log(`🚨 [LiveAgentHandover] Pausing automated replies for ${cleanSessionId} (Reason: MAX_FAILED_ATTEMPTS)`);
+      return { triggeredHandover: true, attempts: currentAttempts, unresolvedAttempts: currentAttempts };
+    }
+
+    await ChatSession.updateOne(
+      { sessionId: cleanSessionId },
+      { $set: { unresolvedAttempts: currentAttempts, updatedAt: new Date() } },
+      { upsert: true }
+    );
+
+    return { triggeredHandover: false, attempts: currentAttempts, unresolvedAttempts: currentAttempts };
+  } catch (err) {
+    console.error(`[ChatHistoryService] Error recording failed attempt for ${sessionId}:`, err.message);
+    return { triggeredHandover: false, attempts: 0, unresolvedAttempts: 0 };
+  }
+}
+
+/**
+ * Resets the failed attempts counter to 0 upon a clean, successful interaction
+ * @param {string} sessionId - Phone number or session ID
+ */
+async function resetFailedAttempts(sessionId) {
+  if (!sessionId) return;
+  try {
+    const cleanSessionId = String(sessionId).trim();
+    await ChatSession.updateOne(
+      { sessionId: cleanSessionId },
+      { $set: { unresolvedAttempts: 0 } }
+    );
+  } catch (err) {
+    // Non-fatal
+  }
+}
+
+/**
+ * Resumes automated AI responses for a paused chat session
+ * @param {string} sessionId - Phone number or session ID
+ * @returns {Promise<object|null>}
+ */
+async function resumeSession(sessionId) {
+  if (!sessionId) return null;
+  try {
+    const cleanSessionId = String(sessionId).trim();
+    const updated = await ChatSession.findOneAndUpdate(
+      { sessionId: cleanSessionId },
+      {
+        $set: {
+          isHandedOff: false,
+          handedOffAt: null,
+          handoverReason: null,
+          unresolvedAttempts: 0,
+          updatedAt: new Date(),
+        },
+      },
+      { new: true }
+    );
+    console.log(`▶️ [LiveAgentHandover] Resumed automated AI responses for ${cleanSessionId}`);
+    return updated || { sessionId: cleanSessionId, isHandedOff: false, unresolvedAttempts: 0 };
+  } catch (err) {
+    console.error(`[ChatHistoryService] Error resuming session for ${sessionId}:`, err.message);
+    return null;
+  }
+}
+
+/**
+ * Returns all chat sessions currently paused for a live agent
+ * @returns {Promise<Array>}
+ */
+async function getActiveHandoffs() {
+  try {
+    const sessions = await ChatSession.find({ isHandedOff: true }).sort({ handedOffAt: -1 });
+    return sessions.map((s) => ({
+      sessionId: s.sessionId,
+      handedOffAt: s.handedOffAt,
+      handoverReason: s.handoverReason,
+      unresolvedAttempts: s.unresolvedAttempts,
+      updatedAt: s.updatedAt,
+      lastMessage: s.messages?.[s.messages.length - 1]?.parts?.[0]?.text || '',
+    }));
+  } catch (err) {
+    console.error('[ChatHistoryService] Error fetching active handoffs:', err.message);
+    return [];
+  }
+}
+
 module.exports = {
   DEFAULT_MAX_MESSAGES,
   sanitizeHistoryForGemini,
@@ -213,4 +386,12 @@ module.exports = {
   recordMessageExchange,
   clearChatHistory,
   getChatSessionStats,
+  detectAgentKeyword,
+  isSessionHandedOff,
+  activateHandover,
+  recordFailedAttempt,
+  resetFailedAttempts,
+  resumeSession,
+  getActiveHandoffs,
 };
+

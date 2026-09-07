@@ -11,6 +11,7 @@ import GeminiQuotaCard from './components/GeminiQuotaCard';
 import EventDetailsModal from './components/EventDetailsModal';
 import ScheduleManager from './components/ScheduleManager';
 import EnvConfigModal from './components/EnvConfigModal';
+import LiveAgentHandoffCard from './components/LiveAgentHandoffCard';
 
 export default function App() {
   const [settings, setSettings] = useState(null);
@@ -136,6 +137,9 @@ export default function App() {
 
       {/* Google Gemini AI Quota & Daily Limit Monitor */}
       <GeminiQuotaCard onOpenEnvModal={() => setIsEnvModalOpen(true)} />
+
+      {/* Live Agent Handoff & Auto-Pause Guard */}
+      <LiveAgentHandoffCard onHandoffChanged={handleRefresh} />
 
       {/* WhatsApp Web Direct QR Connect (No Meta Account Required) */}
       <WhatsAppWebCard />

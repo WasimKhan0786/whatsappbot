@@ -1,6 +1,7 @@
 const BotSettings = require('../models/BotSettings');
 const MessageLog = require('../models/MessageLog');
 const WhitelistContact = require('../models/WhitelistContact');
+const ChatSession = require('../models/ChatSession');
 const { generateGeminiReply } = require('../services/geminiService');
 const { sendWhatsAppMessage } = require('../services/whatsappService');
 const { buildDynamicPersonaPrompt } = require('../services/personaService');
@@ -9,6 +10,13 @@ const {
   recordMessageExchange,
   clearChatHistory,
   getChatSessionStats,
+  isSessionHandedOff,
+  detectAgentKeyword,
+  activateHandover,
+  recordFailedAttempt,
+  resetFailedAttempts,
+  getActiveHandoffs,
+  resumeSession,
 } = require('../services/chatHistoryService');
 const { normalizePhoneNumber } = require('./webhookController');
 
@@ -26,6 +34,7 @@ const getSettings = async (req, res) => {
     const ignoredCount = await MessageLog.countDocuments({ status: 'IGNORED_PHONE_MISMATCH' });
     const disabledCount = await MessageLog.countDocuments({ status: 'BOT_DISABLED' });
     const errorCount = await MessageLog.countDocuments({ status: 'ERROR' });
+    const handedOffCount = await ChatSession.countDocuments({ isHandedOff: true });
 
     res.json({
       settings: {
@@ -40,6 +49,7 @@ const getSettings = async (req, res) => {
         ignored: ignoredCount,
         disabled: disabledCount,
         errors: errorCount,
+        handedOff: handedOffCount,
       },
       envStatus: {
         hasGeminiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'YOUR_GEMINI_API_KEY'),
@@ -198,10 +208,80 @@ const simulateIncoming = async (req, res) => {
       });
     }
 
+    // 2.5 Check if session is paused for Live Agent
+    const isPausedForAgent = await isSessionHandedOff(sender);
+    if (isPausedForAgent) {
+      const log = await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: '[Automated responses paused - Live agent active]',
+        status: 'PAUSED_FOR_AGENT',
+      });
+      return res.json({
+        success: false,
+        status: 'PAUSED_FOR_AGENT',
+        message: `Automated replies are PAUSED for ${sender} because Live Agent mode is active.`,
+        log,
+      });
+    }
+
+    // 2.6 Check if user explicitly typed 'agent' or 'human' keyword
+    const requestedAgent = detectAgentKeyword(messageText);
+    if (requestedAgent) {
+      await activateHandover(sender, 'KEYWORD_AGENT');
+
+      const isEnglishQuery = /^[a-zA-Z0-9\s.,!?'"()-]+$/.test(messageText) && !/\b(kya|bhai|bolo|karo|nahi)\b/i.test(messageText);
+      const handoverReply = isEnglishQuery
+        ? "I am connecting you with our live agent team immediately. Automated responses have been paused. A team member will assist you shortly."
+        : "Main aapko hamari live team se connect kar raha hoon. AI replies pause kar diye gaye hain, hamari team aapse jald hi rabta karegi.";
+
+      const whatsappResult = await sendWhatsAppMessage(sender, handoverReply);
+      const log = await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: handoverReply,
+        status: 'AGENT_HANDOFF_TRIGGERED',
+      });
+      await recordMessageExchange(sender, messageText, handoverReply);
+
+      return res.json({
+        success: true,
+        status: 'AGENT_HANDOFF_TRIGGERED',
+        replyText: handoverReply,
+        whatsappResult,
+        log,
+      });
+    }
+
     // 3. Dynamic Persona & Isolated Style Prompt Generation with real-time mirroring
-    const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, sender, messageText);
-    const chatHistory = await getGeminiChatHistory(sender);
-    const replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
+    let failResult = null;
+    let replyText = "";
+    try {
+      const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, sender, messageText);
+      const chatHistory = await getGeminiChatHistory(sender);
+      replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
+      await resetFailedAttempts(sender);
+    } catch (aiErr) {
+      console.warn('Simulation AI generation error:', aiErr.message);
+      failResult = await recordFailedAttempt(sender);
+      if (failResult.triggeredHandover) {
+        replyText = "I apologize, but I am unable to properly resolve your query. I have notified our live agent team immediately and paused automated replies so a human can step in to assist you.";
+      } else {
+        const log = await MessageLog.create({
+          sender,
+          messageIn: messageText,
+          status: 'ERROR',
+          errorMessage: `Gemini failure (attempt ${failResult.unresolvedAttempts}/3): ${aiErr.message}`,
+        });
+        return res.status(500).json({
+          success: false,
+          status: 'ERROR',
+          error: aiErr.message,
+          unresolvedAttempts: failResult.unresolvedAttempts,
+          log,
+        });
+      }
+    }
 
     // 4. WhatsApp Send (or simulation)
     const whatsappResult = await sendWhatsAppMessage(sender, replyText);
@@ -211,7 +291,7 @@ const simulateIncoming = async (req, res) => {
       sender,
       messageIn: messageText,
       messageOut: replyText,
-      status: 'PROCESSED',
+      status: failResult?.triggeredHandover ? 'AGENT_HANDOFF_TRIGGERED' : 'PROCESSED',
     });
 
     // 6. Record to capped ChatSession history
@@ -223,7 +303,7 @@ const simulateIncoming = async (req, res) => {
 
     return res.json({
       success: true,
-      status: 'PROCESSED',
+      status: failResult?.triggeredHandover ? 'AGENT_HANDOFF_TRIGGERED' : 'PROCESSED',
       replyText,
       whatsappResult,
       log,
@@ -242,6 +322,42 @@ const simulateIncoming = async (req, res) => {
       error: error.message,
       log,
     });
+  }
+};
+
+/**
+ * GET /api/handoffs
+ * List all active live agent handoffs (sessions where automated replies are paused)
+ */
+const getHandoffList = async (req, res) => {
+  try {
+    const handoffs = await getActiveHandoffs();
+    return res.json({ success: true, handoffs });
+  } catch (error) {
+    console.error('Error fetching handoff list:', error);
+    return res.status(500).json({ error: 'Failed to fetch handoff list' });
+  }
+};
+
+/**
+ * POST /api/handoffs/:sessionId/resume
+ * Resume automated AI bot responses for a paused chat session
+ */
+const resumeHandoffSession = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const session = await resumeSession(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found or not currently handed off' });
+    }
+    return res.json({
+      success: true,
+      message: `Automated AI responses resumed for ${sessionId}`,
+      session,
+    });
+  } catch (error) {
+    console.error('Error resuming session:', error);
+    return res.status(500).json({ error: 'Failed to resume session' });
   }
 };
 
@@ -288,6 +404,8 @@ module.exports = {
   getLogs,
   clearLogs,
   simulateIncoming,
+  getHandoffList,
+  resumeHandoffSession,
   getSessionHistory,
   clearSessionHistory,
 };

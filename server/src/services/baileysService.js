@@ -11,7 +11,15 @@ const fs = require('fs');
 const { generateGeminiReply } = require('./geminiService');
 const { checkActiveSchedule } = require('./scheduleService');
 const { buildDynamicPersonaPrompt, resolveContactPersona } = require('./personaService');
-const { getGeminiChatHistory, recordMessageExchange } = require('./chatHistoryService');
+const {
+  getGeminiChatHistory,
+  recordMessageExchange,
+  detectAgentKeyword,
+  isSessionHandedOff,
+  activateHandover,
+  recordFailedAttempt,
+  resetFailedAttempts,
+} = require('./chatHistoryService');
 const BotSettings = require('../models/BotSettings');
 const MessageLog = require('../models/MessageLog');
 const WhitelistContact = require('../models/WhitelistContact');
@@ -290,6 +298,47 @@ async function initBaileys(forceRestart = false) {
             continue;
           }
 
+          // Check if session is paused for Live Agent
+          const isPausedForAgent = await isSessionHandedOff(senderPhone);
+          if (isPausedForAgent) {
+            console.log(`[Baileys] 🛑 Automated replies PAUSED for ${senderPhone} (Live Agent Mode Active).`);
+            try {
+              await MessageLog.create({
+                sender: senderPhone,
+                messageIn: messageText,
+                messageOut: '[Automated responses paused - Live agent active]',
+                status: 'PAUSED_FOR_AGENT',
+                metaMessageId: msg.key.id || `baileys_${Date.now()}`,
+              });
+            } catch (pErr) {}
+            continue;
+          }
+
+          // Check if user explicitly typed 'agent' or 'human' keyword
+          const requestedAgent = detectAgentKeyword(messageText);
+          if (requestedAgent) {
+            console.log(`[Baileys] 🚨 Live Agent requested by ${senderPhone} via keyword ("${messageText}"). Pausing automated responses.`);
+            await activateHandover(senderPhone, 'KEYWORD_AGENT');
+
+            const isEnglishQuery = /^[a-zA-Z0-9\s.,!?'"()-]+$/.test(messageText) && !/\b(kya|bhai|bolo|karo|nahi)\b/i.test(messageText);
+            const handoverReply = isEnglishQuery
+              ? "I am connecting you with our live agent team immediately. Automated responses have been paused. A team member will assist you shortly."
+              : "Main aapko hamari live team se connect kar raha hoon. AI replies pause kar diye gaye hain, hamari team aapse jald hi rabta karegi.";
+
+            try {
+              await sock.sendMessage(senderJid, { text: handoverReply });
+              await MessageLog.create({
+                sender: senderPhone,
+                messageIn: messageText,
+                messageOut: handoverReply,
+                status: 'AGENT_HANDOFF_TRIGGERED',
+                metaMessageId: msg.key.id || `baileys_${Date.now()}`,
+              });
+              await recordMessageExchange(senderPhone, messageText, handoverReply);
+            } catch (hErr) {}
+            continue;
+          }
+
           // Build isolated dynamic persona & tone directive tailored for this active contact with real-time style mirroring
           const persona = resolveContactPersona(matchedContact);
           const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, senderPhone, messageText);
@@ -331,22 +380,32 @@ async function initBaileys(forceRestart = false) {
           }
 
           // 4. If no active schedule matched, proceed with processing the message using Gemini AI with the isolated persona
+          let failResult = null;
           if (!replyText) {
             try {
               const chatHistory = await getGeminiChatHistory(senderPhone);
               replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
+              // Successful reply: reset failed attempts
+              await resetFailedAttempts(senderPhone);
             } catch (aiErr) {
-              console.warn(`[Baileys] Gemini generation fallback triggered:`, aiErr.message);
-              if (persona.key === 'ROMANTIC') {
-                replyText = "Haan meri jaan! Bas abhi free hua. Khana khaya aapne? Sab theek?";
-              } else if (persona.key === 'RESPECTFUL') {
-                replyText = "Pranam Bhabhi ji! Boliye, sab theek thaak? Main thoda sa busy tha, bataiye kya baat thi?";
-              } else if (persona.key === 'CASUAL_SLANG') {
-                replyText = "Haan bhai bol na, kya scene hai? Sab sort hai?";
-              } else if (persona.key === 'EMOTIONAL') {
-                replyText = "Haanji, main hamesha yahan hoon. Dil chhota mat karna, bataiye kya baat hai?";
+              console.warn(`[Baileys] Gemini generation error:`, aiErr.message);
+              // Check if AI failed 3 attempts consecutively
+              failResult = await recordFailedAttempt(senderPhone);
+              if (failResult.triggeredHandover) {
+                console.log(`[Baileys] 🚨 AI failed to resolve query after 3 attempts for ${senderPhone}. Pausing automated responses.`);
+                replyText = "I apologize, but I am unable to properly resolve your query. I have notified our live agent team immediately and paused automated replies so a human can step in to assist you.";
               } else {
-                replyText = "Haanji, boliye kya haal chaal? Sab theek? Bataiye kya baat thi.";
+                if (persona.key === 'ROMANTIC') {
+                  replyText = "Haan meri jaan! Bas abhi free hua. Khana khaya aapne? Sab theek?";
+                } else if (persona.key === 'RESPECTFUL') {
+                  replyText = "Pranam Bhabhi ji! Boliye, sab theek thaak? Main thoda sa busy tha, bataiye kya baat thi?";
+                } else if (persona.key === 'CASUAL_SLANG') {
+                  replyText = "Haan bhai bol na, kya scene hai? Sab sort hai?";
+                } else if (persona.key === 'EMOTIONAL') {
+                  replyText = "Haanji, main hamesha yahan hoon. Dil chhota mat karna, bataiye kya baat hai?";
+                } else {
+                  replyText = "Haanji, boliye kya haal chaal? Sab theek? Bataiye kya baat thi.";
+                }
               }
             }
           }
@@ -377,7 +436,7 @@ async function initBaileys(forceRestart = false) {
               sender: senderPhone,
               messageIn: messageText,
               messageOut: replyText,
-              status: 'PROCESSED',
+              status: failResult?.triggeredHandover ? 'AGENT_HANDOFF_TRIGGERED' : 'PROCESSED',
               metaMessageId: msg.key.id || `baileys_${Date.now()}`,
             });
           } catch (dbErr) {

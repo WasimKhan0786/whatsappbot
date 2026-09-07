@@ -37,6 +37,24 @@ const chatSessionSchema = new mongoose.Schema({
     type: [chatMessageSchema],
     default: [],
   },
+  isHandedOff: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  handedOffAt: {
+    type: Date,
+    default: null,
+  },
+  handoverReason: {
+    type: String,
+    enum: ['KEYWORD_AGENT', 'KEYWORD_HUMAN', 'MAX_FAILED_ATTEMPTS', null],
+    default: null,
+  },
+  unresolvedAttempts: {
+    type: Number,
+    default: 0,
+  },
   updatedAt: {
     type: Date,
     default: Date.now,

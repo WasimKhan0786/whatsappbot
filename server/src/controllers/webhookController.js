@@ -3,7 +3,15 @@ const MessageLog = require("../models/MessageLog");
 const { generateGeminiReply } = require("../services/geminiService");
 const { checkActiveSchedule } = require("../services/scheduleService");
 const { sendWhatsAppMessage } = require("../services/whatsappService");
-const { getGeminiChatHistory, recordMessageExchange } = require("../services/chatHistoryService");
+const {
+  getGeminiChatHistory,
+  recordMessageExchange,
+  isSessionHandedOff,
+  detectAgentKeyword,
+  activateHandover,
+  recordFailedAttempt,
+  resetFailedAttempts,
+} = require("../services/chatHistoryService");
 const { buildDynamicPersonaPrompt } = require("../services/personaService");
 
 /**
@@ -139,6 +147,47 @@ const handleIncoming = async (req, res) => {
       }
     }
 
+    // 2.5 Check if session is paused for Live Agent
+    const isPausedForAgent = await isSessionHandedOff(sender);
+    if (isPausedForAgent) {
+      console.log(`🛑 Automated replies PAUSED for ${sender} (Live Agent Mode Active).`);
+      await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: '[Automated responses paused - Live agent active]',
+        status: 'PAUSED_FOR_AGENT',
+        metaMessageId: messageId,
+      });
+      return res.status(200).json({ status: 'paused_for_agent' });
+    }
+
+    // 2.6 Check if user explicitly typed 'agent' or 'human' keyword
+    const requestedAgent = detectAgentKeyword(messageText);
+    if (requestedAgent) {
+      console.log(`🚨 Live Agent requested by ${sender} via keyword ("${messageText}"). Pausing automated responses.`);
+      await activateHandover(sender, 'KEYWORD_AGENT');
+
+      const isEnglishQuery = /^[a-zA-Z0-9\s.,!?'"()-]+$/.test(messageText) && !/\b(kya|bhai|bolo|karo|nahi)\b/i.test(messageText);
+      const handoverReply = isEnglishQuery
+        ? "I am connecting you with our live agent team immediately. Automated responses have been paused. A team member will assist you shortly."
+        : "Main aapko hamari live team se connect kar raha hoon. AI replies pause kar diye gaye hain, hamari team aapse jald hi rabta karegi.";
+
+      try {
+        await sendWhatsAppMessage(sender, handoverReply);
+        await MessageLog.create({
+          sender,
+          messageIn: messageText,
+          messageOut: handoverReply,
+          status: 'AGENT_HANDOFF_TRIGGERED',
+          metaMessageId: messageId,
+        });
+        await recordMessageExchange(sender, messageText, handoverReply);
+      } catch (hErr) {
+        console.error('Handover notification send error:', hErr.message);
+      }
+      return res.status(200).json({ status: 'agent_handoff_triggered', replyText: handoverReply });
+    }
+
     // 3. Check for active predefined schedule (e.g. Gym timing, Birthday event)
     let replyText = "";
     try {
@@ -152,25 +201,33 @@ const handleIncoming = async (req, res) => {
     }
 
     // If no active schedule matched, process with Google Gemini API with dynamic style mirroring
+    let failResult = null;
     if (!replyText) {
       console.log(`🤖 Generating polite Gemini reply for ${sender}...`);
       try {
         const chatHistory = await getGeminiChatHistory(sender);
         const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, null, sender, messageText);
         replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
+        await resetFailedAttempts(sender);
       } catch (geminiErr) {
         console.error("Gemini error:", geminiErr.message);
-        await MessageLog.create({
-          sender,
-          messageIn: messageText,
-          messageOut: "",
-          status: "ERROR",
-          errorMessage: `Gemini failure: ${geminiErr.message}`,
-          metaMessageId: messageId,
-        });
-        return res
-          .status(200)
-          .json({ status: "gemini_error", error: geminiErr.message });
+        failResult = await recordFailedAttempt(sender);
+        if (failResult.triggeredHandover) {
+          console.log(`🚨 AI failed to resolve query after 3 attempts for ${sender}. Pausing automated responses.`);
+          replyText = "I apologize, but I am unable to properly resolve your query. I have notified our live agent team immediately and paused automated replies so a human can step in to assist you.";
+        } else {
+          await MessageLog.create({
+            sender,
+            messageIn: messageText,
+            messageOut: "",
+            status: "ERROR",
+            errorMessage: `Gemini failure (attempt ${failResult.unresolvedAttempts}/3): ${geminiErr.message}`,
+            metaMessageId: messageId,
+          });
+          return res
+            .status(200)
+            .json({ status: "gemini_error", error: geminiErr.message, unresolvedAttempts: failResult.unresolvedAttempts });
+        }
       }
     }
 
@@ -183,7 +240,7 @@ const handleIncoming = async (req, res) => {
         sender,
         messageIn: messageText,
         messageOut: replyText,
-        status: "PROCESSED",
+        status: failResult?.triggeredHandover ? 'AGENT_HANDOFF_TRIGGERED' : 'PROCESSED',
         metaMessageId: messageId,
       });
 
@@ -195,7 +252,7 @@ const handleIncoming = async (req, res) => {
       }
 
       console.log(`✅ Successfully replied to ${sender}`);
-      return res.status(200).json({ status: "success", replyText });
+      return res.status(200).json({ status: failResult?.triggeredHandover ? 'agent_handoff_triggered' : 'success', replyText });
     } catch (sendErr) {
       console.error("WhatsApp send error:", sendErr.message);
       await MessageLog.create({
