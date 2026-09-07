@@ -198,8 +198,8 @@ const simulateIncoming = async (req, res) => {
       });
     }
 
-    // 3. Dynamic Persona & Isolated Style Prompt Generation
-    const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, sender);
+    // 3. Dynamic Persona & Isolated Style Prompt Generation with real-time mirroring
+    const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, sender, messageText);
     const chatHistory = await getGeminiChatHistory(sender);
     const replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
 

@@ -290,9 +290,9 @@ async function initBaileys(forceRestart = false) {
             continue;
           }
 
-          // Build isolated dynamic persona & tone directive tailored for this active contact
+          // Build isolated dynamic persona & tone directive tailored for this active contact with real-time style mirroring
           const persona = resolveContactPersona(matchedContact);
-          const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, senderPhone);
+          const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, senderPhone, messageText);
           const contactDisplayName = matchedContact?.name || matchedContact?.relationship || senderPhone;
           if (matchedContact?.styleProfile?.hasCustomStyle) {
             console.log(`[Baileys] 🧬 EXCLUSIVE CHAT STYLE ACTIVE for ${contactDisplayName} (${matchedContact.styleProfile.tone || 'Learned'})`);

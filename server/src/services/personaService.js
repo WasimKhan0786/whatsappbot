@@ -237,12 +237,107 @@ ${cappedChat}
  * @param {object} contact - WhitelistContact document
  * @param {string} senderPhone - Sender phone number
  * @returns {string} - Tailored dynamic system prompt
+/**
+ * Analyzes an incoming WhatsApp message in real-time to detect its language, script, emotional tone, and cadence
+ * @param {string} text - Incoming message text
+ * @returns {object} - Detected language, script, tone, and cadence
  */
-function buildDynamicPersonaPrompt(baseSystemPrompt, contact, senderPhone) {
+function analyzeIncomingMessageStyle(text) {
+  if (!text || typeof text !== 'string') {
+    return {
+      language: 'Hinglish',
+      script: 'Latin',
+      tone: 'Friendly and conversational',
+      cadence: 'Concise (1-2 sentences)',
+    };
+  }
+
+  const clean = text.trim();
+  const lower = clean.toLowerCase();
+  const wordCount = clean.split(/\s+/).filter(Boolean).length;
+
+  // 1. Script & Language Detection
+  const hasDevanagari = /[\u0900-\u097F]/.test(clean);
+  const hasArabicUrdu = /[\u0600-\u06FF]/.test(clean);
+
+  // Common English words rarely found alone in casual Hinglish
+  const englishMarkers = /\b(could|would|please|thank you|thanks|regards|meeting|schedule|available|inquire|information|regarding|appreciate|sincerely|details|report|project|document|attached|confirm|status|morning|evening|afternoon|tonight|tomorrow|yesterday)\b/i;
+
+  // Hinglish / Desi slang markers
+  const hinglishMarkers = /\b(kya|kaise|kaha|kidhar|kahan|kyu|kyun|bhai|yaar|haanji|bolo|batao|theek|arre|acha|accha|sort|scene|bawa|hoga|raha|rahe|chahiye|bolna|boliye|meri|mera|aap|tum|hum|nahi|nhi|chal|milte|free|khana|sab|sunao|bataiye)\b/i;
+
+  let detectedLanguage = 'Hinglish (Conversational Hindi in English script)';
+  let detectedScript = 'Latin';
+
+  if (hasDevanagari) {
+    detectedLanguage = 'Hindi (हिन्दी / Devanagari script)';
+    detectedScript = 'Devanagari';
+  } else if (hasArabicUrdu) {
+    detectedLanguage = 'Urdu / Arabic script';
+    detectedScript = 'Arabic/Urdu';
+  } else if (englishMarkers.test(clean) && !hinglishMarkers.test(clean)) {
+    detectedLanguage = 'Standard English';
+    detectedScript = 'Latin';
+  } else if (hinglishMarkers.test(clean)) {
+    detectedLanguage = 'Hinglish';
+    detectedScript = 'Latin';
+  } else if (/^[a-zA-Z0-9\s.,!?'"()-]+$/.test(clean) && wordCount >= 3 && !hinglishMarkers.test(clean)) {
+    detectedLanguage = 'Standard English';
+    detectedScript = 'Latin';
+  }
+
+  // 2. Tone & Emotion Detection
+  let detectedTone = 'Natural and conversational';
+  if (/\b(urgent|asap|emergency|fast|jaldi|turant|important)\b/i.test(lower)) {
+    detectedTone = 'Urgent, direct, and swift';
+  } else if (/\b(sad|depressed|worried|upset|crying|pain|hurt|tension|trouble|dard|pareshan|dil|rone)\b/i.test(lower)) {
+    detectedTone = 'Empathetic, comforting, and heartfelt support';
+  } else if (/\b(haha|lol|lmao|hehe|😂|🤣|mast|jhakaas|kya scene|bawa)\b/i.test(lower)) {
+    detectedTone = 'Playful, humorous, casual brotherly banter';
+  } else if (/\b(love|miss you|jaan|baby|shona|darling|heart|❤️|🥰|😘|sweetheart)\b/i.test(lower)) {
+    detectedTone = 'Affectionate, warm, tender, and caring';
+  } else if (/\b(sir|madam|kindly|official|meeting|professional|invoice|proposal|client)\b/i.test(lower)) {
+    detectedTone = 'Professional, polite, courteous, and respectful';
+  } else if (/\b(pranam|namaste|aashirwad|bhabhi ji|uncle|aunty)\b/i.test(lower)) {
+    detectedTone = 'Traditional desi etiquette, polite, and deeply respectful';
+  }
+
+  // 3. Cadence & Length Detection
+  let cadence = 'Short and punchy (1-2 sentences)';
+  if (wordCount <= 3) {
+    cadence = 'Ultra-short burst (1 quick sentence, max 8-12 words)';
+  } else if (wordCount > 25) {
+    cadence = 'Structured and thorough, but clean mobile formatting';
+  }
+
+  return {
+    language: detectedLanguage,
+    script: detectedScript,
+    tone: detectedTone,
+    cadence,
+    hasDevanagari,
+    wordCount,
+  };
+}
+
+/**
+ * Builds an isolated dynamic system prompt for Gemini tailored specifically to the recipient
+ * and dynamically mirrors the incoming message's language, tone, and typing style.
+ *
+ * @param {string} baseSystemPrompt - Base prompt from BotSettings
+ * @param {object} contact - WhitelistContact document
+ * @param {string} senderPhone - Sender phone number
+ * @param {string} [incomingMessage] - Real-time incoming WhatsApp message text
+ * @returns {string} - Tailored dynamic system prompt
+ */
+function buildDynamicPersonaPrompt(baseSystemPrompt, contact, senderPhone, incomingMessage = '') {
   const persona = resolveContactPersona(contact);
   const contactName = contact?.name ? `"${contact.name}"` : (contact?.relationship ? `"${contact.relationship}"` : 'this contact');
   const relationship = contact?.relationship || 'Friend';
   const customInstructions = contact?.customToneInstructions?.trim() || '';
+
+  // Analyze incoming message style for real-time mirroring
+  const styleAnalysis = analyzeIncomingMessageStyle(incomingMessage);
 
   // Check if contact has a custom analyzed chat style profile
   const style = contact?.styleProfile;
@@ -272,7 +367,7 @@ ${customInstructions ? `[SPECIAL USER NOTE]: "${customInstructions}"` : ''}
 
 [CRITICAL CONTENT INDEPENDENCE & ISOLATION RULES]:
 1. APPLY STYLISTIC TRAITS ONLY: You must adopt ONLY the typing quirks, casing habits, punctuation (e.g. double dots '..'), vocabulary patterns, and tone described above.
-2. STRICTLY IGNORE PAST CHAT TOPICS & DETAILS: Completely disregard and ignore the specific events, tasks, places, activities, or historical situations from past chat samples (e.g. do NOT mention being at the office, commuting, eating dinner, or past errands unless the contact specifically brings it up in their CURRENT incoming message).
+2. STRICTLY IGNORE PAST CHAT TOPICS & DETAILS: Completely disregard and ignore the specific events, tasks, places, activities, or historical situations from past chat samples.
 3. FOCUS 100% ON THE CURRENT MESSAGE: Respond solely and relevantly to what the contact is saying or asking right now in real time, but formatted in the user's authentic typing style.
 4. STRICT EXCLUSIVITY: Apply these specific typing habits and vocabulary EXCLUSIVELY to ${contactName} (${senderPhone || contact?.phoneNumber}). Never leak or use them with any other contact.
 ======================================================
@@ -299,13 +394,38 @@ Apply this specific persona and tone ONLY to this active conversation with ${con
 `;
   }
 
-  return `${baseSystemPrompt || ''}\n\n${personaDirective}`;
+  // Append real-time adaptive mirroring directive for the active incoming message
+  const adaptiveMirroringDirective = `
+======================================================
+[REAL-TIME INCOMING MESSAGE ADAPTIVE MIRRORING DIRECTIVE]
+Incoming Message Analyzed: "${incomingMessage || 'Current message'}"
+- Detected Language / Script: ${styleAnalysis.language} (${styleAnalysis.script})
+- Detected Emotional Tone: ${styleAnalysis.tone}
+- Recommended Cadence: ${styleAnalysis.cadence}
+
+CORE MIRRORING MANDATE:
+1. LANGUAGE & SCRIPT MIRRORING:
+   - Analyze the incoming message for its language, tone, and style, and generate a response that matches them perfectly, ensuring the interaction feels natural and consistent with the user's input.
+   - If the user writes in Standard English, reply in natural, fluent English (do NOT force Hinglish).
+   - If the user writes in Hinglish, reply in natural, authentic Hinglish.
+   - If the user writes in Devanagari Hindi (हिन्दी), reply in natural Devanagari Hindi.
+   - If the user writes in another language or script, reply in that exact language and script.
+2. TONE & REGISTER MIRRORING:
+   - Mirror the emotional tone and social register: ${styleAnalysis.tone}.
+   - Never sound like an AI assistant or bot. Never say "I am an AI assistant" or "How can I assist you?".
+3. CADENCE & LENGTH MIRRORING:
+   - Mirror the user's brevity: ${styleAnalysis.cadence}. Keep replies short, punchy, and realistic (1-2 sentences maximum) as real people text on WhatsApp.
+======================================================
+`;
+
+  return `${baseSystemPrompt || ''}\n\n${personaDirective}\n\n${adaptiveMirroringDirective}`;
 }
 
 module.exports = {
   PERSONA_CONFIGS,
   resolveContactPersona,
   analyzeChatSample,
+  analyzeIncomingMessageStyle,
   buildDynamicPersonaPrompt,
 };
 

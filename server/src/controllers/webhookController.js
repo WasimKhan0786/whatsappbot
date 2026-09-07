@@ -4,6 +4,7 @@ const { generateGeminiReply } = require("../services/geminiService");
 const { checkActiveSchedule } = require("../services/scheduleService");
 const { sendWhatsAppMessage } = require("../services/whatsappService");
 const { getGeminiChatHistory, recordMessageExchange } = require("../services/chatHistoryService");
+const { buildDynamicPersonaPrompt } = require("../services/personaService");
 
 /**
  * Normalizes phone numbers for comparison (removes all non-digit characters)
@@ -150,12 +151,13 @@ const handleIncoming = async (req, res) => {
       console.warn("Schedule check error:", schedErr.message);
     }
 
-    // If no active schedule matched, process with Google Gemini API
+    // If no active schedule matched, process with Google Gemini API with dynamic style mirroring
     if (!replyText) {
       console.log(`🤖 Generating polite Gemini reply for ${sender}...`);
       try {
         const chatHistory = await getGeminiChatHistory(sender);
-        replyText = await generateGeminiReply(messageText, settings.systemPrompt, chatHistory);
+        const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, null, sender, messageText);
+        replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
       } catch (geminiErr) {
         console.error("Gemini error:", geminiErr.message);
         await MessageLog.create({
