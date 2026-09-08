@@ -1,5 +1,5 @@
 const ScheduleEvent = require('../models/ScheduleEvent');
-const { checkActiveSchedule, isScheduleActive, getLocalTimeComponents } = require('../services/scheduleService');
+const { checkActiveSchedule, isScheduleActive, getLocalTimeComponents, refreshScheduleCache } = require('../services/scheduleService');
 
 /**
  * GET /api/schedules
@@ -86,6 +86,9 @@ const createSchedule = async (req, res) => {
       isExecuted: false,
     });
 
+    // ⚡ Real-time In-Memory Cache Refresh
+    await refreshScheduleCache();
+
     res.status(201).json({
       success: true,
       message: 'Schedule event created successfully',
@@ -111,6 +114,9 @@ const updateSchedule = async (req, res) => {
       return res.status(404).json({ success: false, error: 'Schedule event not found' });
     }
 
+    // ⚡ Real-time In-Memory Cache Refresh
+    await refreshScheduleCache();
+
     res.json({
       success: true,
       message: 'Schedule event updated successfully',
@@ -133,6 +139,9 @@ const deleteSchedule = async (req, res) => {
     if (!schedule) {
       return res.status(404).json({ success: false, error: 'Schedule event not found' });
     }
+
+    // ⚡ Real-time In-Memory Cache Refresh
+    await refreshScheduleCache();
 
     res.json({
       success: true,

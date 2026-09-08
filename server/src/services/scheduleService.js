@@ -3,6 +3,25 @@ const MessageLog = require('../models/MessageLog');
 const WhitelistContact = require('../models/WhitelistContact');
 
 let activeSchedulerInterval = null;
+// ⚡ In-Memory RAM Cache: Stores active schedules locally in RAM to eliminate redundant database reads
+let cachedActiveSchedules = [];
+let isCacheInitialized = false;
+
+/**
+ * Syncs and refreshes in-memory RAM cache from MongoDB
+ */
+async function refreshScheduleCache() {
+  try {
+    const schedules = await ScheduleEvent.find({ isActive: true }).sort({ priority: -1, createdAt: -1 });
+    cachedActiveSchedules = schedules;
+    isCacheInitialized = true;
+    console.log(`[Schedule Cache] ⚡ In-Memory Cache Refreshed: ${cachedActiveSchedules.length} active schedules loaded in RAM.`);
+    return cachedActiveSchedules;
+  } catch (err) {
+    console.error('[Schedule Cache] Error refreshing RAM schedule cache:', err.message);
+    return cachedActiveSchedules;
+  }
+}
 
 /**
  * Helper to check if a time (HH:mm) falls between start and end (handles overnight)
@@ -140,7 +159,7 @@ function isScheduleActive(schedule, date = new Date(), relationship = null, send
 }
 
 /**
- * Queries the database and returns the highest priority active schedule event matching the current time
+ * Queries in-memory RAM cache first (0 DB load) and returns the highest priority active schedule event
  * @param {Date} targetDate
  * @param {string} relationship - Optional relationship role of sender (e.g. 'Brother', 'Bhabhi')
  * @param {string} senderPhone - Optional phone number of sender
@@ -148,24 +167,26 @@ function isScheduleActive(schedule, date = new Date(), relationship = null, send
  */
 async function checkActiveSchedule(targetDate = new Date(), relationship = null, senderPhone = null) {
   try {
-    const schedules = await ScheduleEvent.find({ isActive: true }).sort({ priority: -1, createdAt: -1 });
+    // Ensure cache is populated
+    if (!isCacheInitialized) {
+      await refreshScheduleCache();
+    }
 
-    for (const schedule of schedules) {
+    for (const schedule of cachedActiveSchedules) {
       if (isScheduleActive(schedule, targetDate, relationship, senderPhone)) {
         return schedule;
       }
     }
     return null;
   } catch (error) {
-    console.error('[ScheduleService] Error checking active schedule:', error.message);
+    console.error('[ScheduleService] Error checking active schedule in cache:', error.message);
     return null;
   }
 }
 
 /**
- * 📤 Proactive Outbound Scheduler:
- * Checks for schedules configured with PROACTIVE_OUTBOUND_BROADCAST whose designated date & time matches,
- * and automatically dispatches direct WhatsApp messages without waiting for incoming user triggers!
+ * 📤 Proactive Outbound Scheduler (0 Database Read Queries on idle ticks):
+ * Evaluates in-memory RAM cache for proactive schedules due right now.
  *
  * @param {object} socketInstance - Baileys WebSocket instance
  */
@@ -173,22 +194,24 @@ async function processPendingOutboundSchedules(socketInstance) {
   if (!socketInstance) return;
 
   try {
+    if (!isCacheInitialized) {
+      await refreshScheduleCache();
+    }
+
     const now = new Date();
     const { currentHHmm, currentDayOfWeek, currentMonthDay, currentFullDate, currentYear } = getLocalTimeComponents(now);
 
-    // Find all active proactive outbound schedules
-    const schedules = await ScheduleEvent.find({
-      isActive: true,
-      executionMode: 'PROACTIVE_OUTBOUND_BROADCAST',
-    });
+    // Filter proactive schedules directly from RAM (ZERO DB reads)
+    const proactiveSchedules = cachedActiveSchedules.filter(
+      (s) => s.executionMode === 'PROACTIVE_OUTBOUND_BROADCAST' && s.isActive
+    );
 
-    for (const schedule of schedules) {
+    for (const schedule of proactiveSchedules) {
       let isDue = false;
 
       // 1. One-Off Specific DateTime (e.g. "2026-09-09T10:00")
       if (schedule.scheduledDateTime) {
         const dtStr = String(schedule.scheduledDateTime).trim();
-        // Extract date and time parts
         const [sDate, sTime] = dtStr.includes('T') ? dtStr.split('T') : dtStr.split(' ');
         const timeShort = (sTime || '').substring(0, 5);
 
@@ -204,7 +227,6 @@ async function processPendingOutboundSchedules(socketInstance) {
         const dateMatch = sDate === currentFullDate || sDate === currentMonthDay;
 
         if (dateMatch && sTime === currentHHmm) {
-          // Check repeat intervals
           if (schedule.repeatInterval === 'YEARLY') {
             const lastYear = schedule.lastExecutedAt ? getLocalTimeComponents(schedule.lastExecutedAt).currentYear : null;
             if (lastYear !== currentYear) isDue = true;
@@ -388,4 +410,5 @@ module.exports = {
   seedDefaultSchedules,
   processPendingOutboundSchedules,
   startOutboundScheduler,
+  refreshScheduleCache,
 };
