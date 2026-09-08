@@ -505,7 +505,8 @@ async function initBaileys(forceRestart = false) {
           // Update message count for contact & check if limit reached
           if (matchedContact) {
             matchedContact.messagesSentCount = (matchedContact.messagesSentCount || 0) + 1;
-            if (effectiveLimit > 0 && matchedContact.messagesSentCount >= effectiveLimit) {
+            const reachedCapNow = effectiveLimit > 0 && matchedContact.messagesSentCount >= effectiveLimit;
+            if (reachedCapNow) {
               matchedContact.isCapReached = true;
               matchedContact.capReachedAt = new Date();
               console.log(`[Baileys] 🔒 Auto-Cap Reached for ${senderPhone}: Sent ${matchedContact.messagesSentCount}/${effectiveLimit} messages. Auto-replies paused.`);
@@ -514,6 +515,38 @@ async function initBaileys(forceRestart = false) {
               await matchedContact.save();
             } catch (saveCountErr) {
               console.warn('[Baileys] Error saving message count:', saveCountErr.message);
+            }
+
+            // 🎯 Send Farewell Auto-Closing Announcement when limit is reached!
+            if (reachedCapNow && matchedContact.messagesSentCount === effectiveLimit) {
+              const closingText = (matchedContact.customClosingMessage && matchedContact.customClosingMessage.trim() !== '')
+                ? matchedContact.customClosingMessage.trim()
+                : (settings.limitReachedClosingMessage && settings.limitReachedClosingMessage.trim() !== '')
+                ? settings.limitReachedClosingMessage.trim()
+                : 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke AI WhatsApp Assistant se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much! ✨';
+
+              console.log(`[Baileys] 🏁 Sending Auto-Closing Announcement to ${senderPhone}...`);
+
+              setTimeout(async () => {
+                try {
+                  await sock.sendPresenceUpdate('composing', senderJid);
+                  await new Promise((resolve) => setTimeout(resolve, 1200));
+                  await sock.sendPresenceUpdate('paused', senderJid);
+                  await sock.sendMessage(senderJid, { text: closingText });
+                  console.log(`[Baileys] ✅ Auto-Closing Announcement delivered to ${senderPhone}: "${closingText.substring(0, 60)}..."`);
+
+                  await MessageLog.create({
+                    sender: senderPhone,
+                    messageIn: `[Auto-Cap Limit (${matchedContact.messagesSentCount}/${effectiveLimit}) Final Trigger]`,
+                    messageOut: closingText,
+                    status: 'CAP_CLOSING_SENT',
+                    metaMessageId: `closing_${Date.now()}`,
+                  });
+                  await recordMessageExchange(senderPhone, '[Limit Reached Announcement]', closingText);
+                } catch (closingErr) {
+                  console.warn('[Baileys] Failed to dispatch closing farewell message:', closingErr.message);
+                }
+              }, 1800);
             }
           }
 

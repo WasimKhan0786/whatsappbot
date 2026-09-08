@@ -361,6 +361,40 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
           </p>
         </div>
 
+        {/* Auto-Closing Farewell Message (Handoff to Owner Announcement) */}
+        <div className="control-group" style={{ marginTop: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <label className="control-label" htmlFor="closing-message-input" style={{ margin: 0 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                ✨ Auto-Closing Farewell Message (Sent When Limit Hits)
+              </span>
+            </label>
+            <button
+              type="button"
+              className="chip-btn"
+              style={{ fontSize: '0.74rem', padding: '3px 8px' }}
+              onClick={() => {
+                setLimitReachedClosingMessage(
+                  'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke AI WhatsApp Assistant se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much! ✨'
+                );
+              }}
+            >
+              Reset Default Text
+            </button>
+          </div>
+          <textarea
+            id="closing-message-input"
+            className="textarea-input"
+            rows={3}
+            value={limitReachedClosingMessage}
+            onChange={(e) => setLimitReachedClosingMessage(e.target.value)}
+            placeholder="Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke AI WhatsApp Assistant se baat kar rahe the..."
+          />
+          <p className="input-hint">
+            <strong>Farewell Note:</strong> Jaise hi koi contact apni last message limit par pahuchega, bot final reply bhejne ke theek 1.5s baad yeh closing message bhej kar shant ho jayega.
+          </p>
+        </div>
+
         {/* Save Button & Feedback */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16 }}>
           <button

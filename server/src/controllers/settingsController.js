@@ -374,10 +374,11 @@ const simulateIncoming = async (req, res) => {
     // 4. WhatsApp Send (or simulation)
     const whatsappResult = await sendWhatsAppMessage(sender, replyText);
 
-    // Update message count for contact & check if limit reached
+    let closingMessageSent = null;
     if (matchedContact) {
       matchedContact.messagesSentCount = (matchedContact.messagesSentCount || 0) + 1;
-      if (effectiveLimit > 0 && matchedContact.messagesSentCount >= effectiveLimit) {
+      const reachedCapNow = effectiveLimit > 0 && matchedContact.messagesSentCount >= effectiveLimit;
+      if (reachedCapNow) {
         matchedContact.isCapReached = true;
         matchedContact.capReachedAt = new Date();
       }
@@ -385,6 +386,24 @@ const simulateIncoming = async (req, res) => {
         await matchedContact.save();
       } catch (saveCountErr) {
         console.warn('Simulation message count save note:', saveCountErr.message);
+      }
+
+      if (reachedCapNow && matchedContact.messagesSentCount === effectiveLimit) {
+        closingMessageSent = (matchedContact.customClosingMessage && matchedContact.customClosingMessage.trim() !== '')
+          ? matchedContact.customClosingMessage.trim()
+          : (settings.limitReachedClosingMessage && settings.limitReachedClosingMessage.trim() !== '')
+          ? settings.limitReachedClosingMessage.trim()
+          : 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke AI WhatsApp Assistant se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much! ✨';
+
+        try {
+          await MessageLog.create({
+            sender,
+            messageIn: `[Auto-Cap Limit (${matchedContact.messagesSentCount}/${effectiveLimit}) Final Trigger]`,
+            messageOut: closingMessageSent,
+            status: 'CAP_CLOSING_SENT',
+          });
+          await recordMessageExchange(sender, '[Limit Reached Announcement]', closingMessageSent);
+        } catch (simCloseErr) {}
       }
     }
 
@@ -414,6 +433,7 @@ const simulateIncoming = async (req, res) => {
       success: true,
       status: failResult?.triggeredHandover ? 'AGENT_HANDOFF_TRIGGERED' : 'PROCESSED',
       replyText,
+      closingMessage: closingMessageSent,
       whatsappResult,
       log,
     });
