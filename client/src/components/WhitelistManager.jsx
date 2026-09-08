@@ -23,6 +23,7 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
+  Search,
 } from 'lucide-react';
 
 const COMMON_RELATIONSHIPS = [
@@ -57,6 +58,10 @@ export default function WhitelistManager({ onContactsUpdated }) {
   const [formMaxLimit, setFormMaxLimit] = useState(0);
   const [showFormChatSample, setShowFormChatSample] = useState(false);
   const [formChatSample, setFormChatSample] = useState('');
+
+  // Contacts Search & Filter State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterCategory, setFilterCategory] = useState('ALL'); // 'ALL' | 'ACTIVE' | 'CAP_REACHED' | 'CLONED'
 
   // Chat Style Cloner Modal State
   const [styleModalContact, setStyleModalContact] = useState(null);
@@ -362,6 +367,36 @@ export default function WhitelistManager({ onContactsUpdated }) {
     }
     return { bg: 'rgba(34, 197, 94, 0.15)', text: '#4ade80', border: 'rgba(34, 197, 94, 0.3)' };
   };
+
+  // Real-time search & category filter logic
+  const filteredContacts = contacts.filter((c) => {
+    const query = searchQuery.trim().toLowerCase();
+    if (query) {
+      const cleanQ = query.replace(/\D/g, '');
+      const cleanPhone = (c.phoneNumber || '').replace(/\D/g, '');
+      const phoneMatches = (cleanQ && cleanPhone.includes(cleanQ)) || (c.phoneNumber || '').toLowerCase().includes(query);
+      const nameMatches = c.name && c.name.toLowerCase().includes(query);
+      const relMatches = c.relationship && c.relationship.toLowerCase().includes(query);
+      const personaMatches = c.persona && c.persona.toLowerCase().includes(query);
+      const noteMatches = (c.notes && c.notes.toLowerCase().includes(query)) || (c.customToneInstructions && c.customToneInstructions.toLowerCase().includes(query));
+      const crmMatches = c.crmTag && c.crmTag.toLowerCase().includes(query);
+
+      if (!phoneMatches && !nameMatches && !relMatches && !personaMatches && !noteMatches && !crmMatches) {
+        return false;
+      }
+    }
+
+    if (filterCategory === 'CAP_REACHED') {
+      return c.isCapReached || (c.maxMessageLimit > 0 && c.messagesSentCount >= c.maxMessageLimit);
+    }
+    if (filterCategory === 'CLONED') {
+      return Boolean(c.styleProfile?.hasCustomStyle);
+    }
+    if (filterCategory === 'ACTIVE') {
+      return !c.isCapReached && !(c.maxMessageLimit > 0 && c.messagesSentCount >= c.maxMessageLimit);
+    }
+    return true;
+  });
 
   return (
     <div className="card whitelist-manager-card" style={{ marginBottom: 24 }}>
@@ -688,13 +723,157 @@ export default function WhitelistManager({ onContactsUpdated }) {
           )}
         </div>
 
+        {/* 🔍 REAL-TIME SEARCH BOX & FILTER PILLS */}
+        {contacts.length > 0 && (
+          <div style={{ marginBottom: 16, background: 'rgba(15, 23, 42, 0.45)', padding: '12px 14px', borderRadius: 12, border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              {/* Search Input */}
+              <div style={{ position: 'relative', flex: '1 1 260px' }}>
+                <Search
+                  size={16}
+                  style={{
+                    position: 'absolute',
+                    left: 12,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    color: searchQuery ? '#10b981' : '#64748b',
+                    pointerEvents: 'none',
+                    transition: 'color 0.2s',
+                  }}
+                />
+                <input
+                  type="text"
+                  className="text-input"
+                  style={{
+                    width: '100%',
+                    paddingLeft: 36,
+                    paddingRight: searchQuery ? 36 : 12,
+                    height: 40,
+                    margin: 0,
+                    fontSize: '0.86rem',
+                    background: '#090d16',
+                    borderColor: searchQuery ? 'rgba(16, 185, 129, 0.5)' : 'rgba(255, 255, 255, 0.12)',
+                    boxShadow: searchQuery ? '0 0 10px rgba(16, 185, 129, 0.2)' : 'none',
+                  }}
+                  placeholder="Search by contact name, phone (+91...), relationship, or persona..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    title="Clear search"
+                    style={{
+                      position: 'absolute',
+                      right: 10,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'rgba(255, 255, 255, 0.12)',
+                      border: 'none',
+                      color: '#cbd5e1',
+                      borderRadius: '50%',
+                      width: 20,
+                      height: 20,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+
+              {/* Quick Filter Pills */}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                {[
+                  { key: 'ALL', label: `All (${contacts.length})` },
+                  { key: 'ACTIVE', label: '🟢 Active' },
+                  { key: 'CAP_REACHED', label: '🛑 Cap Reached' },
+                  { key: 'CLONED', label: '🧬 Cloned Style' },
+                ].map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setFilterCategory(tab.key)}
+                    style={{
+                      background: filterCategory === tab.key ? 'rgba(16, 185, 129, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                      border: filterCategory === tab.key ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.1)',
+                      color: filterCategory === tab.key ? '#4ade80' : '#94a3b8',
+                      padding: '6px 12px',
+                      borderRadius: 8,
+                      fontSize: '0.76rem',
+                      fontWeight: filterCategory === tab.key ? 700 : 500,
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Results Counter & Reset Filter Link */}
+            {(searchQuery || filterCategory !== 'ALL') && (
+              <div style={{ marginTop: 8, fontSize: '0.78rem', color: '#94a3b8', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                <span>
+                  Showing <b>{filteredContacts.length}</b> of <b>{contacts.length}</b> contacts
+                  {searchQuery && <> matching "<b>{searchQuery}</b>"</>}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setFilterCategory('ALL');
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#38bdf8',
+                    fontSize: '0.75rem',
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                    padding: 0,
+                  }}
+                >
+                  Reset Search & Filters
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {contacts.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '30px 20px', color: '#64748b', fontSize: '0.9rem' }}>
             No contacts in whitelist yet. Add contacts above to allow bot auto-replies!
           </div>
+        ) : filteredContacts.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '36px 20px', background: 'rgba(15, 23, 42, 0.4)', borderRadius: 12, border: '1px dashed rgba(255, 255, 255, 0.15)', marginTop: 10 }}>
+            <Search size={32} color="#64748b" style={{ margin: '0 auto 10px', display: 'block' }} />
+            <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#e2e8f0', marginBottom: 4 }}>
+              No contacts matching "{searchQuery}"
+            </div>
+            <p style={{ margin: '0 0 14px', fontSize: '0.8rem', color: '#94a3b8' }}>
+              Check spelling or try searching by phone digits or relationship.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                setFilterCategory('ALL');
+              }}
+              className="btn btn-secondary"
+              style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+            >
+              Clear Search & Show All
+            </button>
+          </div>
         ) : (
           <div className="whitelist-contacts-grid">
-            {contacts.map((c) => {
+            {filteredContacts.map((c) => {
               const badge = getRelationshipBadgeStyle(c.relationship);
               const pKey = c.persona || 'AUTO';
               const isRomantic = pKey === 'ROMANTIC' || (pKey === 'AUTO' && /wife|chipkali|jaan|gf|love/i.test(c.relationship + ' ' + (c.name || '')));
