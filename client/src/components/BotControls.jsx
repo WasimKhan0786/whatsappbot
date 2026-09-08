@@ -32,6 +32,8 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
   const [minReadingDelayMs, setMinReadingDelayMs] = useState(settings?.minReadingDelayMs ?? 2000);
   const [maxReadingDelayMs, setMaxReadingDelayMs] = useState(settings?.maxReadingDelayMs ?? 6000);
   const [typingSpeedCPM, setTypingSpeedCPM] = useState(settings?.typingSpeedCPM ?? 250);
+  const [defaultMaxMessagesPerContact, setDefaultMaxMessagesPerContact] = useState(settings?.defaultMaxMessagesPerContact ?? 0);
+  const [limitReachedClosingMessage, setLimitReachedClosingMessage] = useState(settings?.limitReachedClosingMessage ?? '');
 
   const [isEditingPhone, setIsEditingPhone] = useState(false);
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
@@ -44,6 +46,8 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       setMinReadingDelayMs(settings.minReadingDelayMs ?? 2000);
       setMaxReadingDelayMs(settings.maxReadingDelayMs ?? 6000);
       setTypingSpeedCPM(settings.typingSpeedCPM ?? 250);
+      setDefaultMaxMessagesPerContact(settings.defaultMaxMessagesPerContact ?? 0);
+      setLimitReachedClosingMessage(settings.limitReachedClosingMessage || '');
 
       // Only sync if user is not actively editing
       if (!isEditingPhone) {
@@ -67,6 +71,8 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       minReadingDelayMs,
       maxReadingDelayMs,
       typingSpeedCPM,
+      defaultMaxMessagesPerContact: Number(defaultMaxMessagesPerContact),
+      limitReachedClosingMessage,
     });
   };
 
@@ -82,10 +88,12 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       minReadingDelayMs,
       maxReadingDelayMs,
       typingSpeedCPM,
+      defaultMaxMessagesPerContact: Number(defaultMaxMessagesPerContact),
+      limitReachedClosingMessage,
     });
   };
 
-  // Form submit for phone number, prompt, and anti-ban settings
+  // Form submit for phone number, prompt, anti-ban settings, and message limits
   const handleSaveConfig = async (e) => {
     if (e) e.preventDefault();
     const res = await onUpdateSettings({
@@ -96,6 +104,8 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       minReadingDelayMs: Number(minReadingDelayMs),
       maxReadingDelayMs: Number(maxReadingDelayMs),
       typingSpeedCPM: Number(typingSpeedCPM),
+      defaultMaxMessagesPerContact: Number(defaultMaxMessagesPerContact),
+      limitReachedClosingMessage,
     });
     if (res) {
       setIsEditingPhone(false);
@@ -302,6 +312,53 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Global Max Messages Per Contact (Auto-Cap Controller) */}
+        <div className="control-group" style={{ marginTop: 16 }}>
+          <label className="control-label" htmlFor="global-limit-input">
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              📊 Global Max Messages Per Contact
+            </span>
+            <span className="label-badge" style={{ background: defaultMaxMessagesPerContact > 0 ? 'rgba(234, 179, 8, 0.2)' : 'rgba(34, 197, 94, 0.2)', color: defaultMaxMessagesPerContact > 0 ? '#facc15' : '#4ade80' }}>
+              {defaultMaxMessagesPerContact > 0 ? `Max ${defaultMaxMessagesPerContact} Replies` : 'Unlimited Default'}
+            </span>
+          </label>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              id="global-limit-input"
+              type="number"
+              min="0"
+              max="1000"
+              className="text-input"
+              style={{ width: 140, height: 40, fontSize: '0.9rem' }}
+              value={defaultMaxMessagesPerContact}
+              onChange={(e) => setDefaultMaxMessagesPerContact(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              placeholder="0 (Unlimited)"
+            />
+            <div className="preset-chips" style={{ margin: 0 }}>
+              {[0, 3, 5, 10, 20].map((lim) => (
+                <button
+                  key={lim}
+                  type="button"
+                  className={`chip-btn ${defaultMaxMessagesPerContact === lim ? 'active' : ''}`}
+                  style={{
+                    padding: '5px 12px',
+                    fontSize: '0.78rem',
+                    background: defaultMaxMessagesPerContact === lim ? 'rgba(37, 211, 102, 0.25)' : undefined,
+                    borderColor: defaultMaxMessagesPerContact === lim ? '#25D366' : undefined,
+                    color: defaultMaxMessagesPerContact === lim ? '#4ade80' : undefined,
+                  }}
+                  onClick={() => setDefaultMaxMessagesPerContact(lim)}
+                >
+                  {lim === 0 ? '♾️ Unlimited' : `🎯 ${lim} msgs`}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="input-hint">
+            <strong>Global Message Cap:</strong> Agar set kiya toh bot kisi bhi contact ko max utne hi messages bhejega, uske baad khud pause ho jayega (Quota bachega aur spamming rukegi). Whitelist list me individual contacts par alag limit bhi set kar sakte hain.
+          </p>
         </div>
 
         {/* Save Button & Feedback */}

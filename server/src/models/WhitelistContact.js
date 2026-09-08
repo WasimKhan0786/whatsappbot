@@ -95,6 +95,29 @@ const whitelistContactSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+  // Max Message Limit & Auto-Cap Controller
+  maxMessageLimit: {
+    type: Number,
+    default: 0, // 0 = Inherit global setting or unlimited
+  },
+  messagesSentCount: {
+    type: Number,
+    default: 0,
+  },
+  isCapReached: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  capReachedAt: {
+    type: Date,
+    default: null,
+  },
+  customClosingMessage: {
+    type: String,
+    default: '',
+    trim: true,
+  },
   createdAt: {
     type: Date,
     default: Date.now,

@@ -47,6 +47,8 @@ const getSettings = async (req, res) => {
         minReadingDelayMs: settings.minReadingDelayMs ?? 2000,
         maxReadingDelayMs: settings.maxReadingDelayMs ?? 6000,
         typingSpeedCPM: settings.typingSpeedCPM ?? 250,
+        defaultMaxMessagesPerContact: settings.defaultMaxMessagesPerContact ?? 0,
+        limitReachedClosingMessage: settings.limitReachedClosingMessage || '',
         updatedAt: settings.updatedAt,
       },
       stats: {
@@ -84,6 +86,8 @@ const updateSettings = async (req, res) => {
       minReadingDelayMs,
       maxReadingDelayMs,
       typingSpeedCPM,
+      defaultMaxMessagesPerContact,
+      limitReachedClosingMessage,
     } = req.body;
 
     const settings = await BotSettings.getSettings();
@@ -116,6 +120,14 @@ const updateSettings = async (req, res) => {
       settings.typingSpeedCPM = Math.max(100, Math.min(1000, typingSpeedCPM));
     }
 
+    if (typeof defaultMaxMessagesPerContact === 'number') {
+      settings.defaultMaxMessagesPerContact = Math.max(0, defaultMaxMessagesPerContact);
+    }
+
+    if (typeof limitReachedClosingMessage === 'string') {
+      settings.limitReachedClosingMessage = limitReachedClosingMessage.trim();
+    }
+
     settings.updatedAt = new Date();
     await settings.save();
 
@@ -129,6 +141,8 @@ const updateSettings = async (req, res) => {
         minReadingDelayMs: settings.minReadingDelayMs,
         maxReadingDelayMs: settings.maxReadingDelayMs,
         typingSpeedCPM: settings.typingSpeedCPM,
+        defaultMaxMessagesPerContact: settings.defaultMaxMessagesPerContact,
+        limitReachedClosingMessage: settings.limitReachedClosingMessage,
         updatedAt: settings.updatedAt,
       },
     });
@@ -242,6 +256,26 @@ const simulateIncoming = async (req, res) => {
       });
     }
 
+    // 2.4 Check Per-Contact & Global Max Message Limit (Auto-Cap Controller)
+    const effectiveLimit = matchedContact && typeof matchedContact.maxMessageLimit === 'number' && matchedContact.maxMessageLimit > 0
+      ? matchedContact.maxMessageLimit
+      : (settings.defaultMaxMessagesPerContact || 0);
+
+    if (effectiveLimit > 0 && matchedContact && (matchedContact.messagesSentCount || 0) >= effectiveLimit) {
+      const log = await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: `[Auto-Cap Reached (${matchedContact.messagesSentCount}/${effectiveLimit}) - AI response skipped]`,
+        status: 'CAP_REACHED',
+      });
+      return res.json({
+        success: false,
+        status: 'CAP_REACHED',
+        message: `Max message limit reached (${matchedContact.messagesSentCount}/${effectiveLimit}) for ${sender}. AI responses paused.`,
+        log,
+      });
+    }
+
     // 2.5 Check if session is paused for Live Agent
     const isPausedForAgent = await isSessionHandedOff(sender);
     if (isPausedForAgent) {
@@ -339,6 +373,20 @@ const simulateIncoming = async (req, res) => {
 
     // 4. WhatsApp Send (or simulation)
     const whatsappResult = await sendWhatsAppMessage(sender, replyText);
+
+    // Update message count for contact & check if limit reached
+    if (matchedContact) {
+      matchedContact.messagesSentCount = (matchedContact.messagesSentCount || 0) + 1;
+      if (effectiveLimit > 0 && matchedContact.messagesSentCount >= effectiveLimit) {
+        matchedContact.isCapReached = true;
+        matchedContact.capReachedAt = new Date();
+      }
+      try {
+        await matchedContact.save();
+      } catch (saveCountErr) {
+        console.warn('Simulation message count save note:', saveCountErr.message);
+      }
+    }
 
     // 5. DB Logging
     const log = await MessageLog.create({

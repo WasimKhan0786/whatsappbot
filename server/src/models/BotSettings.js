@@ -38,6 +38,15 @@ const botSettingsSchema = new mongoose.Schema({
     type: Number,
     default: 250,
   },
+  defaultMaxMessagesPerContact: {
+    type: Number,
+    default: 0, // 0 = Unlimited
+  },
+  limitReachedClosingMessage: {
+    type: String,
+    default: '',
+    trim: true,
+  },
   updatedAt: {
     type: Date,
     default: Date.now,

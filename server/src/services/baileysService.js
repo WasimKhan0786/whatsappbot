@@ -303,6 +303,25 @@ async function initBaileys(forceRestart = false) {
             continue;
           }
 
+          // 📊 CHECK PER-CONTACT & GLOBAL MAX MESSAGE LIMIT (AUTO-CAP CONTROLLER)
+          const effectiveLimit = matchedContact && typeof matchedContact.maxMessageLimit === 'number' && matchedContact.maxMessageLimit > 0
+            ? matchedContact.maxMessageLimit
+            : (settings.defaultMaxMessagesPerContact || 0);
+
+          if (effectiveLimit > 0 && matchedContact && (matchedContact.messagesSentCount || 0) >= effectiveLimit) {
+            console.log(`[Baileys] 🛑 MAX MESSAGE LIMIT REACHED (${matchedContact.messagesSentCount}/${effectiveLimit}) for ${senderPhone}. Skipping automated reply.`);
+            try {
+              await MessageLog.create({
+                sender: senderPhone,
+                messageIn: messageText,
+                messageOut: `[Auto-Cap Reached (${matchedContact.messagesSentCount}/${effectiveLimit}) - AI response skipped]`,
+                status: 'CAP_REACHED',
+                metaMessageId: msg.key.id || `baileys_${Date.now()}`,
+              });
+            } catch (capLogErr) {}
+            continue;
+          }
+
           // Check if session is paused for Live Agent
           const isPausedForAgent = await isSessionHandedOff(senderPhone);
           if (isPausedForAgent) {
@@ -482,6 +501,21 @@ async function initBaileys(forceRestart = false) {
           // STEP 4: Natural Delivery (Dispatch WhatsApp Message)
           await sock.sendMessage(senderJid, { text: replyText });
           console.log(`[Anti-Ban Shield] ✅ Message naturally delivered to ${senderPhone}: "${replyText.substring(0, 75)}..."`);
+
+          // Update message count for contact & check if limit reached
+          if (matchedContact) {
+            matchedContact.messagesSentCount = (matchedContact.messagesSentCount || 0) + 1;
+            if (effectiveLimit > 0 && matchedContact.messagesSentCount >= effectiveLimit) {
+              matchedContact.isCapReached = true;
+              matchedContact.capReachedAt = new Date();
+              console.log(`[Baileys] 🔒 Auto-Cap Reached for ${senderPhone}: Sent ${matchedContact.messagesSentCount}/${effectiveLimit} messages. Auto-replies paused.`);
+            }
+            try {
+              await matchedContact.save();
+            } catch (saveCountErr) {
+              console.warn('[Baileys] Error saving message count:', saveCountErr.message);
+            }
+          }
 
           // Save to database message logs
           try {

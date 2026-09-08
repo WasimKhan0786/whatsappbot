@@ -56,6 +56,8 @@ async function addContact(req, res) {
     const cleanPersona = (persona || 'AUTO').trim();
     const cleanCustomTone = (customToneInstructions || '').trim();
     const cleanChatSample = (req.body.rawChatSample || '').trim();
+    const messageLimit = typeof req.body.maxMessageLimit === 'number' ? Math.max(0, req.body.maxMessageLimit) : (parseInt(req.body.maxMessageLimit, 10) || 0);
+    const closingMsg = (req.body.customClosingMessage || '').trim();
 
     let styleProfile = undefined;
     if (cleanChatSample && cleanChatSample.length >= 20) {
@@ -74,6 +76,8 @@ async function addContact(req, res) {
       notes: cleanNotes,
       persona: cleanPersona,
       customToneInstructions: cleanCustomTone,
+      maxMessageLimit: messageLimit,
+      customClosingMessage: closingMsg,
     };
 
     if (styleProfile) {
@@ -224,6 +228,69 @@ async function updateCrmTag(req, res) {
   }
 }
 
+// POST /api/whitelist/:id/reset-counter
+async function resetMessageCounter(req, res) {
+  try {
+    const { id } = req.params;
+    const contact = await WhitelistContact.findById(id);
+    if (!contact) {
+      return res.status(404).json({ success: false, error: 'Contact not found.' });
+    }
+
+    contact.messagesSentCount = 0;
+    contact.isCapReached = false;
+    contact.capReachedAt = null;
+    await contact.save();
+
+    res.json({
+      success: true,
+      message: `Message counter reset to 0 for ${contact.name || contact.phoneNumber}. Bot replies are unblocked!`,
+      data: contact,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+// PUT /api/whitelist/:id/message-limit
+async function setContactMessageLimit(req, res) {
+  try {
+    const { id } = req.params;
+    const { maxMessageLimit, customClosingMessage } = req.body;
+
+    const contact = await WhitelistContact.findById(id);
+    if (!contact) {
+      return res.status(404).json({ success: false, error: 'Contact not found.' });
+    }
+
+    if (maxMessageLimit !== undefined) {
+      const parsedLimit = typeof maxMessageLimit === 'number' ? Math.max(0, maxMessageLimit) : (parseInt(maxMessageLimit, 10) || 0);
+      contact.maxMessageLimit = parsedLimit;
+      // If limit increased above current sent count or set to unlimited (0), unblock cap
+      if (parsedLimit === 0 || parsedLimit > contact.messagesSentCount) {
+        contact.isCapReached = false;
+        contact.capReachedAt = null;
+      } else if (contact.messagesSentCount >= parsedLimit && parsedLimit > 0) {
+        contact.isCapReached = true;
+      }
+    }
+
+    if (customClosingMessage !== undefined) {
+      contact.customClosingMessage = customClosingMessage.trim();
+    }
+
+    await contact.save();
+
+    res.json({
+      success: true,
+      message: `Message limit updated for ${contact.name || contact.phoneNumber} (${contact.maxMessageLimit === 0 ? 'Unlimited' : contact.maxMessageLimit + ' msgs'}).`,
+      data: contact,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+}
+
 module.exports = {
   getContacts,
   addContact,
@@ -231,6 +298,8 @@ module.exports = {
   analyzeAndSaveChatStyle,
   clearChatStyle,
   updateCrmTag,
+  resetMessageCounter,
+  setContactMessageLimit,
   syncBotSettings,
 };
 

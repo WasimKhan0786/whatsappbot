@@ -54,6 +54,7 @@ export default function WhitelistManager({ onContactsUpdated }) {
   const [name, setName] = useState('');
   const [persona, setPersona] = useState('AUTO');
   const [customToneInstructions, setCustomToneInstructions] = useState('');
+  const [formMaxLimit, setFormMaxLimit] = useState(0);
   const [showFormChatSample, setShowFormChatSample] = useState(false);
   const [formChatSample, setFormChatSample] = useState('');
 
@@ -91,6 +92,49 @@ export default function WhitelistManager({ onContactsUpdated }) {
     fetchContacts();
   }, [fetchContacts]);
 
+  // Reset message counter back to 0 & unpause bot
+  const handleResetCounter = async (id, nameOrPhone) => {
+    try {
+      const res = await fetch(`/api/whitelist/${id}/reset-counter`, { method: 'POST' });
+      const json = await res.json();
+      if (json.success) {
+        setSuccessMsg(`Message counter reset to 0 for ${nameOrPhone}. Auto-replies unblocked!`);
+        await fetchContacts();
+        if (onContactsUpdated) onContactsUpdated();
+        setTimeout(() => setSuccessMsg(''), 3000);
+      }
+    } catch (err) {
+      setError('Failed to reset message counter: ' + err.message);
+    }
+  };
+
+  // Change contact limit on the fly
+  const handleQuickLimitChange = async (id, newLimit, nameOrPhone) => {
+    try {
+      const res = await fetch(`/api/whitelist/${id}/message-limit`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxMessageLimit: Number(newLimit) }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setSuccessMsg(`Limit updated to ${newLimit === 0 ? 'Unlimited' : newLimit + ' msgs'} for ${nameOrPhone}`);
+        await fetchContacts();
+        if (onContactsUpdated) onContactsUpdated();
+        setTimeout(() => setSuccessMsg(''), 3000);
+      }
+    } catch (err) {
+      setError('Failed to update limit: ' + err.message);
+    }
+  };
+
+  // Add +5 more messages to current limit
+  const handleAddMoreLimit = async (contact) => {
+    const currentBase = Math.max(contact.maxMessageLimit || 0, contact.messagesSentCount || 0);
+    const nextLimit = currentBase + 5;
+    await handleQuickLimitChange(contact._id, nextLimit, contact.name || contact.phoneNumber);
+  };
+
   const handleAdd = async (e) => {
     e.preventDefault();
     setError('');
@@ -116,6 +160,7 @@ export default function WhitelistManager({ onContactsUpdated }) {
           persona: persona,
           customToneInstructions: customToneInstructions.trim(),
           rawChatSample: formChatSample.trim(),
+          maxMessageLimit: Number(formMaxLimit) || 0,
         }),
       });
 
@@ -124,12 +169,13 @@ export default function WhitelistManager({ onContactsUpdated }) {
         throw new Error(data.error || 'Failed to add contact');
       }
 
-      setSuccessMsg(`Added ${data.data.phoneNumber} (${finalRelationship})! ${data.data.styleProfile?.hasCustomStyle ? 'Linguistic chat style analyzed & saved.' : ''}`);
+      setSuccessMsg(`Added ${data.data.phoneNumber} (${finalRelationship})! Limit: ${data.data.maxMessageLimit ? data.data.maxMessageLimit + ' msgs' : 'Unlimited'}`);
       setPhoneNumber('');
       setName('');
       setCustomRel('');
       setPersona('AUTO');
       setCustomToneInstructions('');
+      setFormMaxLimit(0);
       setFormChatSample('');
       setShowFormChatSample(false);
       await fetchContacts();
@@ -470,6 +516,29 @@ export default function WhitelistManager({ onContactsUpdated }) {
             />
             <span style={{ fontSize: '0.71rem', color: '#94a3b8', marginTop: 4, display: 'block' }}>
               💡 Sirf 1-line prompt note ke liye. Bada chat transcript analyze karne ke liye neeche card me <b>"Clone Chat Style"</b> dabayein.
+            </span>
+          </div>
+
+          {/* Max Message Limit (Auto-Cap Controller) */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#cbd5e1', marginBottom: 6 }}>
+              📊 Max Messages Limit (Auto-Cap)
+            </label>
+            <select
+              className="text-input"
+              style={{ height: 42, fontSize: '0.88rem', background: '#0f172a', color: '#f1f5f9', cursor: 'pointer' }}
+              value={formMaxLimit}
+              onChange={(e) => setFormMaxLimit(Number(e.target.value))}
+            >
+              <option value={0}>♾️ Unlimited (or Global Default)</option>
+              <option value={3}>🎯 3 Messages Only</option>
+              <option value={5}>🎯 5 Messages Only</option>
+              <option value={10}>🎯 10 Messages Only</option>
+              <option value={20}>🎯 20 Messages Only</option>
+              <option value={50}>🎯 50 Messages Only</option>
+            </select>
+            <span style={{ fontSize: '0.71rem', color: '#94a3b8', marginTop: 4, display: 'block' }}>
+              Is number ko utne messages bhejte hi bot automatically pause ho jayega.
             </span>
           </div>
         </div>
@@ -814,6 +883,127 @@ export default function WhitelistManager({ onContactsUpdated }) {
                         Note: "{c.customToneInstructions}"
                       </div>
                     )}
+
+                    {/* Message Limit & Counter Progress Section */}
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: '10px 12px',
+                        borderRadius: 10,
+                        background: c.isCapReached
+                          ? 'rgba(239, 68, 68, 0.12)'
+                          : 'rgba(15, 23, 42, 0.65)',
+                        border: c.isCapReached
+                          ? '1px solid rgba(239, 68, 68, 0.4)'
+                          : '1px solid rgba(255, 255, 255, 0.08)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: c.isCapReached ? '#f87171' : '#e2e8f0' }}>
+                            📊 Message Cap:
+                          </span>
+                          {c.isCapReached ? (
+                            <span style={{ fontSize: '0.7rem', padding: '1px 7px', borderRadius: 6, background: '#ef4444', color: '#fff', fontWeight: 800 }}>
+                              🛑 CAP REACHED (PAUSED)
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
+                              {c.maxMessageLimit > 0 ? `${c.messagesSentCount || 0}/${c.maxMessageLimit} sent` : `${c.messagesSentCount || 0} sent (♾️ Unlimited)`}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Limit Selector */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ fontSize: '0.7rem', color: '#64748b' }}>Limit:</span>
+                          <select
+                            value={c.maxMessageLimit || 0}
+                            onChange={(e) => handleQuickLimitChange(c._id, Number(e.target.value), c.name || c.phoneNumber)}
+                            style={{
+                              background: '#090d16',
+                              border: '1px solid rgba(255, 255, 255, 0.15)',
+                              color: '#f8fafc',
+                              borderRadius: 6,
+                              padding: '2px 6px',
+                              fontSize: '0.74rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <option value={0}>♾️ Unlimited</option>
+                            <option value={3}>3 msgs</option>
+                            <option value={5}>5 msgs</option>
+                            <option value={10}>10 msgs</option>
+                            <option value={20}>20 msgs</option>
+                            <option value={50}>50 msgs</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Progress Bar (if limit > 0) */}
+                      {c.maxMessageLimit > 0 && (
+                        <div style={{ width: '100%', height: 6, background: 'rgba(255, 255, 255, 0.1)', borderRadius: 3, overflow: 'hidden', marginBottom: 8 }}>
+                          <div
+                            style={{
+                              width: `${Math.min(100, Math.round(((c.messagesSentCount || 0) / c.maxMessageLimit) * 100))}%`,
+                              height: '100%',
+                              background: c.isCapReached
+                                ? 'linear-gradient(90deg, #ef4444, #dc2626)'
+                                : 'linear-gradient(90deg, #10b981, #06b6d4)',
+                              transition: 'width 0.3s ease',
+                            }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Quick Action Buttons: Reset & +5 More */}
+                      <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                        <button
+                          onClick={() => handleResetCounter(c._id, c.name || c.phoneNumber)}
+                          title="Reset sent counter to 0 and re-enable bot replies"
+                          style={{
+                            flex: 1,
+                            background: 'rgba(59, 130, 246, 0.15)',
+                            border: '1px solid rgba(59, 130, 246, 0.35)',
+                            color: '#60a5fa',
+                            padding: '4px 8px',
+                            borderRadius: 6,
+                            fontSize: '0.72rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 4,
+                          }}
+                        >
+                          <RefreshCw size={11} />
+                          Reset Count (0)
+                        </button>
+                        <button
+                          onClick={() => handleAddMoreLimit(c)}
+                          title="Add 5 more messages to allowed limit and unpause bot"
+                          style={{
+                            flex: 1,
+                            background: 'rgba(16, 185, 129, 0.15)',
+                            border: '1px solid rgba(16, 185, 129, 0.35)',
+                            color: '#34d399',
+                            padding: '4px 8px',
+                            borderRadius: 6,
+                            fontSize: '0.72rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 4,
+                          }}
+                        >
+                          <Zap size={11} />
+                          +5 More Msgs
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   {/* HIGH-VISIBILITY ACTION BUTTON: CLONE / VIEW STYLE */}
