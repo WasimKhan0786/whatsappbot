@@ -19,6 +19,7 @@ const {
   resumeSession,
 } = require('../services/chatHistoryService');
 const { processGameTurn } = require('../services/gameService');
+const { analyzeAndTagContact } = require('../services/crmService');
 const { normalizePhoneNumber } = require('./webhookController');
 
 /**
@@ -42,6 +43,10 @@ const getSettings = async (req, res) => {
         isEnabled: settings.isEnabled,
         allowedPhoneNumber: settings.allowedPhoneNumber,
         systemPrompt: settings.systemPrompt,
+        humanSimulationEnabled: settings.humanSimulationEnabled ?? true,
+        minReadingDelayMs: settings.minReadingDelayMs ?? 2000,
+        maxReadingDelayMs: settings.maxReadingDelayMs ?? 6000,
+        typingSpeedCPM: settings.typingSpeedCPM ?? 250,
         updatedAt: settings.updatedAt,
       },
       stats: {
@@ -71,7 +76,15 @@ const getSettings = async (req, res) => {
  */
 const updateSettings = async (req, res) => {
   try {
-    const { isEnabled, allowedPhoneNumber, systemPrompt } = req.body;
+    const {
+      isEnabled,
+      allowedPhoneNumber,
+      systemPrompt,
+      humanSimulationEnabled,
+      minReadingDelayMs,
+      maxReadingDelayMs,
+      typingSpeedCPM,
+    } = req.body;
 
     const settings = await BotSettings.getSettings();
 
@@ -87,6 +100,22 @@ const updateSettings = async (req, res) => {
       settings.systemPrompt = systemPrompt.trim();
     }
 
+    if (typeof humanSimulationEnabled === 'boolean') {
+      settings.humanSimulationEnabled = humanSimulationEnabled;
+    }
+
+    if (typeof minReadingDelayMs === 'number') {
+      settings.minReadingDelayMs = Math.max(500, minReadingDelayMs);
+    }
+
+    if (typeof maxReadingDelayMs === 'number') {
+      settings.maxReadingDelayMs = Math.min(20000, Math.max(settings.minReadingDelayMs, maxReadingDelayMs));
+    }
+
+    if (typeof typingSpeedCPM === 'number') {
+      settings.typingSpeedCPM = Math.max(100, Math.min(1000, typingSpeedCPM));
+    }
+
     settings.updatedAt = new Date();
     await settings.save();
 
@@ -96,6 +125,10 @@ const updateSettings = async (req, res) => {
         isEnabled: settings.isEnabled,
         allowedPhoneNumber: settings.allowedPhoneNumber,
         systemPrompt: settings.systemPrompt,
+        humanSimulationEnabled: settings.humanSimulationEnabled,
+        minReadingDelayMs: settings.minReadingDelayMs,
+        maxReadingDelayMs: settings.maxReadingDelayMs,
+        typingSpeedCPM: settings.typingSpeedCPM,
         updatedAt: settings.updatedAt,
       },
     });
@@ -321,6 +354,13 @@ const simulateIncoming = async (req, res) => {
     } catch (histErr) {
       console.warn('Simulation history recording note:', histErr.message);
     }
+
+    // 7. Trigger CRM Lead Tagging & Sentiment Classification
+    try {
+      analyzeAndTagContact(sender, messageText).catch((crmErr) => {
+        console.warn('Simulation CRM classification note:', crmErr.message);
+      });
+    } catch (cCallErr) {}
 
     return res.json({
       success: true,

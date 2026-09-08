@@ -18,6 +18,7 @@ const {
   deleteContact,
   analyzeAndSaveChatStyle,
   clearChatStyle,
+  updateCrmTag,
 } = require('../controllers/whitelistController');
 
 const { getGeminiQuota } = require('../controllers/quotaController');
@@ -40,6 +41,7 @@ router.post('/whitelist', addContact);
 router.delete('/whitelist/:id', deleteContact);
 router.post('/whitelist/:id/analyze-chat', analyzeAndSaveChatStyle);
 router.delete('/whitelist/:id/chat-style', clearChatStyle);
+router.put('/whitelist/:id/crm-tag', updateCrmTag);
 
 // Message logs
 router.get('/logs', getLogs);

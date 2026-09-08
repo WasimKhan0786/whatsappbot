@@ -191,12 +191,46 @@ async function deleteContact(req, res) {
   }
 }
 
+// PUT /api/whitelist/:id/crm-tag
+async function updateCrmTag(req, res) {
+  try {
+    const { id } = req.params;
+    const { crmTag, sentimentScore, intentSummary } = req.body;
+
+    const contact = await WhitelistContact.findById(id);
+    if (!contact) {
+      return res.status(404).json({ success: false, error: 'Contact not found.' });
+    }
+
+    if (crmTag) {
+      contact.crmTag = crmTag.toUpperCase();
+    }
+    if (sentimentScore) {
+      contact.sentimentScore = sentimentScore.toUpperCase();
+    }
+    if (typeof intentSummary === 'string') {
+      contact.intentSummary = intentSummary.trim();
+    }
+    contact.crmUpdatedAt = new Date();
+    await contact.save();
+
+    res.json({
+      success: true,
+      message: `CRM tag updated to [${contact.crmTag}] for ${contact.name || contact.phoneNumber}`,
+      data: contact,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+}
+
 module.exports = {
   getContacts,
   addContact,
   deleteContact,
   analyzeAndSaveChatStyle,
   clearChatStyle,
+  updateCrmTag,
   syncBotSettings,
 };
 

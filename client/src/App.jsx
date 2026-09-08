@@ -12,12 +12,14 @@ import EventDetailsModal from './components/EventDetailsModal';
 import ScheduleManager from './components/ScheduleManager';
 import EnvConfigModal from './components/EnvConfigModal';
 import LiveAgentHandoffCard from './components/LiveAgentHandoffCard';
+import CrmLeadBoard from './components/CrmLeadBoard';
 
 export default function App() {
   const [settings, setSettings] = useState(null);
   const [stats, setStats] = useState(null);
   const [envStatus, setEnvStatus] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [contacts, setContacts] = useState([]);
   const [serverOnline, setServerOnline] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -32,6 +34,18 @@ export default function App() {
     setSelectedStatTab(filterKey);
     setIsEventModalOpen(true);
   };
+
+  // Fetch whitelist contacts
+  const fetchContacts = useCallback(async () => {
+    try {
+      const res = await fetch('/api/whitelist');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setContacts(data.data || []);
+    } catch (err) {
+      console.error('Failed to load whitelist contacts for CRM:', err);
+    }
+  }, []);
 
   // Fetch settings & statistics
   const fetchSettings = useCallback(async () => {
@@ -68,7 +82,7 @@ export default function App() {
   // Combined refresh
   const handleRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([fetchSettings(), fetchLogs()]);
+    await Promise.all([fetchSettings(), fetchLogs(), fetchContacts()]);
     setRefreshing(false);
   };
 
@@ -79,9 +93,10 @@ export default function App() {
     const interval = setInterval(() => {
       fetchLogs();
       fetchSettings();
+      fetchContacts();
     }, 6000);
     return () => clearInterval(interval);
-  }, [fetchSettings, fetchLogs]);
+  }, [fetchSettings, fetchLogs, fetchContacts]);
 
   // Update settings handler
   const handleUpdateSettings = async (newSettings) => {
@@ -145,7 +160,10 @@ export default function App() {
       <WhatsAppWebCard />
 
       {/* VIP Whitelist Contacts & Relationship Roles Manager */}
-      <WhitelistManager onContactsUpdated={fetchSettings} />
+      <WhitelistManager onContactsUpdated={handleRefresh} />
+
+      {/* CRM Lead Auto-Tagging & Sentiment Dashboard */}
+      <CrmLeadBoard contacts={contacts} onRefresh={fetchContacts} />
 
       {/* Smart Schedules & Event Auto-Replies (Gym, Sleep, Birthday) */}
       <ScheduleManager />

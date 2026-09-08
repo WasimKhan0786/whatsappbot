@@ -74,6 +74,27 @@ const whitelistContactSchema = new mongoose.Schema({
       default: '',
     },
   },
+  // CRM Lead Tagging & Sentiment Analysis fields
+  crmTag: {
+    type: String,
+    enum: ['HOT_LEAD', 'HIGH_PRIORITY', 'SUPPORT_COMPLAINT', 'COLD_LEAD', 'NEUTRAL'],
+    default: 'NEUTRAL',
+    index: true,
+  },
+  sentimentScore: {
+    type: String,
+    enum: ['HAPPY', 'INTERESTED', 'NEUTRAL', 'FRUSTRATED'],
+    default: 'NEUTRAL',
+  },
+  intentSummary: {
+    type: String,
+    default: '',
+    trim: true,
+  },
+  crmUpdatedAt: {
+    type: Date,
+    default: null,
+  },
   createdAt: {
     type: Date,
     default: Date.now,

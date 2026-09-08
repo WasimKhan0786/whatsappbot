@@ -21,6 +21,7 @@ const {
   resetFailedAttempts,
 } = require('./chatHistoryService');
 const { processGameTurn } = require('./gameService');
+const { analyzeAndTagContact } = require('./crmService');
 const BotSettings = require('../models/BotSettings');
 const MessageLog = require('../models/MessageLog');
 const WhitelistContact = require('../models/WhitelistContact');
@@ -375,14 +376,32 @@ async function initBaileys(forceRestart = false) {
             console.log(`[Baileys] 👤 Active Contact: ${contactDisplayName} | Persona Tone: [${persona.label}]`);
           }
 
-          // 1. Mark message as read (blue ticks)
+          // 🛡️ ANTI-BAN HUMAN SIMULATION PIPELINE (4 STEPS)
+          const isAntiBanActive = settings.humanSimulationEnabled ?? true;
+          const minDelay = settings.minReadingDelayMs ?? 2000;
+          const maxDelay = settings.maxReadingDelayMs ?? 6000;
+          const typingCPM = settings.typingSpeedCPM ?? 250;
+
+          // STEP 1: Message Arrival & Blue Tick (Read Receipt)
           try {
             await sock.readMessages([msg.key]);
           } catch (readErr) {
             // non-fatal
           }
 
-          // 2. Trigger initial typing presence immediately
+          // STEP 2: Calculated Human Reading Delay
+          if (isAntiBanActive) {
+            // Random reading pause proportional to incoming text length (2s - 4s)
+            const incomingLen = messageText.length;
+            const rawReadTime = Math.min(3500, Math.max(1500, incomingLen * 40));
+            const readJitter = Math.floor(Math.random() * 600) - 300; // ±300ms natural human variance
+            const finalReadDelay = Math.max(minDelay, Math.min(maxDelay, rawReadTime + readJitter));
+
+            console.log(`[Anti-Ban Shield] 👁️ Simulating human reading pause for ${senderPhone} (${finalReadDelay}ms)...`);
+            await new Promise((resolve) => setTimeout(resolve, finalReadDelay));
+          }
+
+          // STEP 3: Typing Presence Simulation ("typing..." status)
           try {
             await sock.sendPresenceUpdate('composing', senderJid);
           } catch (presenceErr) {
@@ -391,7 +410,7 @@ async function initBaileys(forceRestart = false) {
 
           const typingStartTime = Date.now();
 
-          // 3. Check for predefined schedules (Gym timings, Birthday events, Sleep mode)
+          // Fetch active schedule auto-reply if present
           let replyText = null;
           let matchedSchedule = null;
 
@@ -405,20 +424,18 @@ async function initBaileys(forceRestart = false) {
             console.warn('[Baileys] Error checking schedule:', scheduleErr.message);
           }
 
-          // 4. If no active schedule matched, proceed with processing the message using Gemini AI with the isolated persona
+          // Generate Gemini AI response with isolated dynamic persona
           let failResult = null;
           if (!replyText) {
             try {
               const chatHistory = await getGeminiChatHistory(senderPhone);
               replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
-              // Successful reply: reset failed attempts
               await resetFailedAttempts(senderPhone);
             } catch (aiErr) {
               console.warn(`[Baileys] Gemini generation error:`, aiErr.message);
-              // Check if AI failed 3 attempts consecutively
               failResult = await recordFailedAttempt(senderPhone);
               if (failResult.triggeredHandover) {
-                console.log(`[Baileys] 🚨 AI failed to resolve query after 3 attempts for ${senderPhone}. Pausing automated responses.`);
+                console.log(`[Baileys] 🚨 AI failed after 3 attempts for ${senderPhone}. Pausing automated responses.`);
                 replyText = "I apologize, but I am unable to properly resolve your query. I have notified our live agent team immediately and paused automated replies so a human can step in to assist you.";
               } else {
                 if (persona.key === 'ROMANTIC') {
@@ -436,25 +453,32 @@ async function initBaileys(forceRestart = false) {
             }
           }
 
-          // 4. Calculate realistic human typing duration (mimics human typing speed)
-          // Minimum 2000ms (2s), Maximum 4500ms (4.5s) based on message length
-          const elapsedAiTime = Date.now() - typingStartTime;
-          const targetTypingDuration = Math.min(4500, Math.max(2000, (replyText?.length || 50) * 30));
-          const remainingDelay = Math.max(400, targetTypingDuration - elapsedAiTime);
+          // Dynamic Typing Speed & Rhythm Delay Calculation
+          if (isAntiBanActive) {
+            const elapsedAiTime = Date.now() - typingStartTime;
+            const replyLength = replyText?.length || 40;
 
-          // Hold typing presence for the remaining human-like typing duration
-          await new Promise((resolve) => setTimeout(resolve, remainingDelay));
+            // CPM formula: characters / (CPM / 60,000 ms)
+            const msPerChar = 60000 / typingCPM;
+            const rawTypingDuration = replyLength * msPerChar;
+            const typingJitter = Math.floor(Math.random() * 800) - 400; // ±400ms human typing variance
+            const targetTypingDuration = Math.max(minDelay, Math.min(maxDelay, Math.round(rawTypingDuration + typingJitter)));
+            const remainingTypingDelay = Math.max(500, targetTypingDuration - elapsedAiTime);
 
-          // 5. Pause typing presence right before sending
+            console.log(`[Anti-Ban Shield] ⌨️ Simulating human typing rhythm for ${senderPhone} (${remainingTypingDelay}ms remaining)...`);
+            await new Promise((resolve) => setTimeout(resolve, remainingTypingDelay));
+          }
+
+          // Pause typing presence right before sending
           try {
             await sock.sendPresenceUpdate('paused', senderJid);
           } catch (pErr) {
             // non-fatal
           }
 
-          // 6. Send WhatsApp reply
+          // STEP 4: Natural Delivery (Dispatch WhatsApp Message)
           await sock.sendMessage(senderJid, { text: replyText });
-          console.log(`[Baileys] 🤖 Replied to ${senderPhone}: "${replyText.substring(0, 80)}..."`);
+          console.log(`[Anti-Ban Shield] ✅ Message naturally delivered to ${senderPhone}: "${replyText.substring(0, 75)}..."`);
 
           // Save to database message logs
           try {
@@ -475,6 +499,13 @@ async function initBaileys(forceRestart = false) {
           } catch (histErr) {
             console.warn('[Baileys] Error recording chat history:', histErr.message);
           }
+
+          // Trigger CRM Lead Tagging & Sentiment Classification asynchronously
+          try {
+            analyzeAndTagContact(senderPhone, messageText).catch((crmErr) => {
+              console.warn('[CRM Lead Board] Async classification note:', crmErr.message);
+            });
+          } catch (crmCallErr) {}
         } catch (msgErr) {
           console.error(`[Baileys] Error processing message from ${senderPhone}:`, msgErr.message);
         }

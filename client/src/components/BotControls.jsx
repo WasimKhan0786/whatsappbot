@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, Check, Phone, Save, Sparkles, Sliders } from 'lucide-react';
+import { Bot, Check, Phone, Save, Sparkles, Sliders, Shield, Clock, Zap } from 'lucide-react';
 
 const PRESETS = [
   {
@@ -28,6 +28,11 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
   const [isEnabled, setIsEnabled] = useState(settings?.isEnabled ?? true);
   const [phoneNumber, setPhoneNumber] = useState(settings?.allowedPhoneNumber ?? '');
   const [prompt, setPrompt] = useState(settings?.systemPrompt ?? '');
+  const [humanSimulationEnabled, setHumanSimulationEnabled] = useState(settings?.humanSimulationEnabled ?? true);
+  const [minReadingDelayMs, setMinReadingDelayMs] = useState(settings?.minReadingDelayMs ?? 2000);
+  const [maxReadingDelayMs, setMaxReadingDelayMs] = useState(settings?.maxReadingDelayMs ?? 6000);
+  const [typingSpeedCPM, setTypingSpeedCPM] = useState(settings?.typingSpeedCPM ?? 250);
+
   const [isEditingPhone, setIsEditingPhone] = useState(false);
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -35,6 +40,11 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
   useEffect(() => {
     if (settings) {
       setIsEnabled(settings.isEnabled);
+      setHumanSimulationEnabled(settings.humanSimulationEnabled ?? true);
+      setMinReadingDelayMs(settings.minReadingDelayMs ?? 2000);
+      setMaxReadingDelayMs(settings.maxReadingDelayMs ?? 6000);
+      setTypingSpeedCPM(settings.typingSpeedCPM ?? 250);
+
       // Only sync if user is not actively editing
       if (!isEditingPhone) {
         setPhoneNumber(settings.allowedPhoneNumber || '');
@@ -53,16 +63,39 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       isEnabled: nextState,
       allowedPhoneNumber: phoneNumber,
       systemPrompt: prompt,
+      humanSimulationEnabled,
+      minReadingDelayMs,
+      maxReadingDelayMs,
+      typingSpeedCPM,
     });
   };
 
-  // Form submit for phone number and prompt
+  // Instant Anti-Ban toggle handler
+  const handleAntiBanToggle = async () => {
+    const nextAntiBan = !humanSimulationEnabled;
+    setHumanSimulationEnabled(nextAntiBan);
+    await onUpdateSettings({
+      isEnabled,
+      allowedPhoneNumber: phoneNumber,
+      systemPrompt: prompt,
+      humanSimulationEnabled: nextAntiBan,
+      minReadingDelayMs,
+      maxReadingDelayMs,
+      typingSpeedCPM,
+    });
+  };
+
+  // Form submit for phone number, prompt, and anti-ban settings
   const handleSaveConfig = async (e) => {
     if (e) e.preventDefault();
     const res = await onUpdateSettings({
       isEnabled,
       allowedPhoneNumber: phoneNumber,
       systemPrompt: prompt,
+      humanSimulationEnabled,
+      minReadingDelayMs: Number(minReadingDelayMs),
+      maxReadingDelayMs: Number(maxReadingDelayMs),
+      typingSpeedCPM: Number(typingSpeedCPM),
     });
     if (res) {
       setIsEditingPhone(false);
@@ -109,6 +142,100 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
             <span className="toggle-knob"></span>
           </button>
         </div>
+      </div>
+
+      {/* 🛡️ Anti-Ban & Human Simulation Protection Shield */}
+      <div
+        style={{
+          marginTop: 16,
+          marginBottom: 20,
+          padding: '16px 20px',
+          background: humanSimulationEnabled
+            ? 'rgba(37, 211, 102, 0.08)'
+            : 'rgba(239, 68, 68, 0.08)',
+          border: `1px solid ${humanSimulationEnabled ? 'rgba(37, 211, 102, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+          borderRadius: 12,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Shield size={22} color={humanSimulationEnabled ? '#25D366' : '#ef4444'} />
+            <div>
+              <h3 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 600, color: '#fff' }}>
+                Anti-Ban & Human Simulation Shield
+              </h3>
+              <span style={{ fontSize: '0.78rem', color: humanSimulationEnabled ? '#4ade80' : '#f87171' }}>
+                {humanSimulationEnabled ? '🛡️ Active Protection: 4-Step Human Reading & Typing Rhythm On' : '⚠️ Disabled: Instant 0s Replies (Higher Ban Risk)'}
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className={`toggle-switch ${humanSimulationEnabled ? 'on' : ''}`}
+            onClick={handleAntiBanToggle}
+            disabled={updating}
+            role="switch"
+            aria-checked={humanSimulationEnabled}
+            aria-label="Toggle Anti-Ban Protection Shield"
+            style={{ width: 44, height: 24 }}
+          >
+            <span className="toggle-knob" style={{ width: 18, height: 18 }}></span>
+          </button>
+        </div>
+
+        {humanSimulationEnabled && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginTop: 14 }}>
+            <div>
+              <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                <Clock size={12} style={{ display: 'inline', marginRight: 4 }} />
+                Min Read Delay (ms)
+              </label>
+              <input
+                type="number"
+                className="text-input"
+                value={minReadingDelayMs}
+                onChange={(e) => setMinReadingDelayMs(e.target.value)}
+                step="500"
+                min="500"
+                max="10000"
+                style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                <Clock size={12} style={{ display: 'inline', marginRight: 4 }} />
+                Max Typing Delay (ms)
+              </label>
+              <input
+                type="number"
+                className="text-input"
+                value={maxReadingDelayMs}
+                onChange={(e) => setMaxReadingDelayMs(e.target.value)}
+                step="500"
+                min="1000"
+                max="20000"
+                style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                <Zap size={12} style={{ display: 'inline', marginRight: 4 }} />
+                Typing Speed (CPM)
+              </label>
+              <input
+                type="number"
+                className="text-input"
+                value={typingSpeedCPM}
+                onChange={(e) => setTypingSpeedCPM(e.target.value)}
+                step="25"
+                min="100"
+                max="1000"
+                style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Settings Form */}
