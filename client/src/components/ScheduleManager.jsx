@@ -16,6 +16,9 @@ import {
   Users,
   Phone,
   HelpCircle,
+  Send,
+  MessageCircle,
+  Repeat,
 } from 'lucide-react';
 
 export default function ScheduleManager() {
@@ -28,10 +31,13 @@ export default function ScheduleManager() {
 
   // Form State
   const [title, setTitle] = useState('');
+  const [executionMode, setExecutionMode] = useState('AUTO_REPLY_ON_INCOMING'); // 'AUTO_REPLY_ON_INCOMING' | 'PROACTIVE_OUTBOUND_BROADCAST'
   const [type, setType] = useState('RECURRING_DAILY');
   const [startTime, setStartTime] = useState('18:00');
   const [endTime, setEndTime] = useState('20:00');
   const [specificDate, setSpecificDate] = useState('');
+  const [scheduledDateTime, setScheduledDateTime] = useState('');
+  const [repeatInterval, setRepeatInterval] = useState('ONCE');
   const [autoReplyText, setAutoReplyText] = useState('');
   const [targetAudienceType, setTargetAudienceType] = useState('ALL'); // 'ALL' | 'SPECIFIC_NUMBERS'
   const [selectedNumbers, setSelectedNumbers] = useState([]);
@@ -112,7 +118,7 @@ export default function ScheduleManager() {
   const handleCreate = async (e) => {
     e.preventDefault();
     if (!title.trim() || !autoReplyText.trim()) {
-      alert('Please provide a title and auto-reply message.');
+      alert('Please provide a title and message.');
       return;
     }
 
@@ -136,20 +142,31 @@ export default function ScheduleManager() {
 
     setSubmitting(true);
     try {
+      const payload = {
+        title,
+        executionMode,
+        autoReplyText,
+        targetRelationship: 'ALL',
+        targetPhoneNumbers: finalTargetNumbers,
+        isActive: true,
+      };
+
+      if (executionMode === 'PROACTIVE_OUTBOUND_BROADCAST') {
+        payload.scheduledDateTime = scheduledDateTime || null;
+        payload.repeatInterval = repeatInterval;
+        payload.startTime = startTime || '10:00';
+        payload.specificDate = specificDate || null;
+      } else {
+        payload.type = type;
+        payload.startTime = type !== 'SPECIFIC_DATE' ? startTime : null;
+        payload.endTime = type !== 'SPECIFIC_DATE' ? endTime : null;
+        payload.specificDate = type === 'SPECIFIC_DATE' ? specificDate : null;
+      }
+
       const res = await fetch('/api/schedules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title,
-          type,
-          startTime: type !== 'SPECIFIC_DATE' ? startTime : null,
-          endTime: type !== 'SPECIFIC_DATE' ? endTime : null,
-          specificDate: type === 'SPECIFIC_DATE' ? specificDate : null,
-          autoReplyText,
-          targetRelationship: 'ALL',
-          targetPhoneNumbers: finalTargetNumbers,
-          isActive: true,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -160,6 +177,7 @@ export default function ScheduleManager() {
       // Reset form
       setTitle('');
       setAutoReplyText('');
+      setScheduledDateTime('');
       setSelectedNumbers([]);
       setCustomPhoneInput('');
       setTargetAudienceType('ALL');
@@ -172,7 +190,8 @@ export default function ScheduleManager() {
     }
   };
 
-  const getScheduleIcon = (scheduleTitle = '') => {
+  const getScheduleIcon = (scheduleTitle = '', mode = '') => {
+    if (mode === 'PROACTIVE_OUTBOUND_BROADCAST') return <Send size={16} style={{ color: '#a855f7' }} />;
     const t = scheduleTitle.toLowerCase();
     if (t.includes('gym') || t.includes('workout')) return <Dumbbell size={16} className="text-emerald" />;
     if (t.includes('sleep') || t.includes('night')) return <Moon size={16} className="text-purple" />;
@@ -192,7 +211,7 @@ export default function ScheduleManager() {
           <div>
             <div className="schedule-header-title-row">
               <h2 className="card-title" style={{ margin: 0 }}>
-                Smart Schedules & Event Auto-Replies
+                Smart Schedules & Proactive Outbound Bot
               </h2>
               {activeNowCount > 0 ? (
                 <span className="status-pill healthy">
@@ -206,7 +225,7 @@ export default function ScheduleManager() {
               )}
             </div>
             <p className="section-subtitle">
-              Prioritize predefined replies (Gym, Sleep, Birthday) before calling Gemini AI
+              Configure incoming auto-replies or schedule proactive direct WhatsApp messages (Birthday wishes, Office reminders)
             </p>
           </div>
         </div>
@@ -220,14 +239,15 @@ export default function ScheduleManager() {
         </button>
       </div>
 
-      {/* Instructional Banner explaining how WhatsApp replies work */}
+      {/* Instructional Banner */}
       <div className="schedule-info-banner">
         <HelpCircle size={17} className="text-blue flex-shrink-0" />
         <div className="info-banner-text">
-          <strong>Kaise WhatsApp Pe Message Jayega?</strong>
+          <strong>2 Powerful Modes Available:</strong>
           <span>
-            Jab koi contact is time ke dauran aapko WhatsApp par message bhejega, bot automatically unko{' '}
-            <strong>"typing..."</strong> dikha kar yeh custom auto-reply bhej dega (Gemini AI ko bypass karke). Baaki time par Gemini AI unse live polite chat karega.
+            <strong>1. Proactive Direct Message:</strong> Date & Time match hote hi bot <em>khud se message send kar dega</em> bina user ke message ka wait kiye.
+            <br />
+            <strong>2. Incoming Auto-Reply:</strong> Jab koi specific hours (Gym, Sleep) me aapko message bhejega tab instant auto-reply deliver hoga.
           </span>
         </div>
       </div>
@@ -235,41 +255,125 @@ export default function ScheduleManager() {
       {/* Add New Schedule Form Drawer */}
       {showAddForm && (
         <form onSubmit={handleCreate} className="schedule-form-drawer">
-          <h4 className="drawer-title">Create Smart Schedule</h4>
+          <h4 className="drawer-title">Create Smart Schedule / Proactive Message</h4>
+
+          {/* Mode Selector */}
+          <div style={{ marginBottom: 16 }}>
+            <label className="field-label" style={{ fontWeight: 600, marginBottom: 8, display: 'block' }}>
+              Select Schedule Execution Mode:
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+              <div
+                onClick={() => setExecutionMode('PROACTIVE_OUTBOUND_BROADCAST')}
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  border: `1.5px solid ${executionMode === 'PROACTIVE_OUTBOUND_BROADCAST' ? '#a855f7' : 'rgba(255,255,255,0.1)'}`,
+                  background: executionMode === 'PROACTIVE_OUTBOUND_BROADCAST' ? 'rgba(168,85,247,0.12)' : 'rgba(255,255,255,0.02)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <Send size={16} color="#a855f7" />
+                  <strong style={{ fontSize: '0.9rem', color: '#fff' }}>Proactive Direct Message</strong>
+                </div>
+                <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                  Bot date & time match hote hi <strong>khud number par message send karega</strong> (Birthday, Office Task reminder).
+                </p>
+              </div>
+
+              <div
+                onClick={() => setExecutionMode('AUTO_REPLY_ON_INCOMING')}
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  border: `1.5px solid ${executionMode === 'AUTO_REPLY_ON_INCOMING' ? '#25D366' : 'rgba(255,255,255,0.1)'}`,
+                  background: executionMode === 'AUTO_REPLY_ON_INCOMING' ? 'rgba(37,211,102,0.12)' : 'rgba(255,255,255,0.02)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <MessageCircle size={16} color="#25D366" />
+                  <strong style={{ fontSize: '0.9rem', color: '#fff' }}>Incoming Auto-Reply</strong>
+                </div>
+                <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                  Jab koi is time me <strong>aapko message bhejega</strong> tab yeh custom reply jayega (Gym, Sleep mode).
+                </p>
+              </div>
+            </div>
+          </div>
 
           <div className="form-grid-2">
             <div className="form-group">
-              <label className="field-label">Schedule Title</label>
+              <label className="field-label">Schedule / Event Title</label>
               <input
                 type="text"
                 className="text-input"
-                placeholder="e.g. Gym Workout, Birthday Wishes, Night Sleep"
+                placeholder={executionMode === 'PROACTIVE_OUTBOUND_BROADCAST' ? 'e.g. Rahul Birthday Wish, Client Follow-up Reminder' : 'e.g. Gym Workout, Night Sleep Mode'}
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 required
               />
             </div>
 
-            <div className="form-group">
-              <label className="field-label">Schedule Type</label>
-              <select
-                className="select-input"
-                value={type}
-                onChange={(e) => setType(e.target.value)}
-              >
-                <option value="RECURRING_DAILY">Daily Time Window (e.g. Gym, Sleep)</option>
-                <option value="SPECIFIC_DATE">Specific Date / Birthday (MM-DD or YYYY-MM-DD)</option>
-              </select>
-            </div>
+            {executionMode === 'PROACTIVE_OUTBOUND_BROADCAST' ? (
+              <div className="form-group">
+                <label className="field-label">Repeat Interval</label>
+                <select
+                  className="select-input"
+                  value={repeatInterval}
+                  onChange={(e) => setRepeatInterval(e.target.value)}
+                >
+                  <option value="ONCE">Once (Send at exact Date & Time only)</option>
+                  <option value="DAILY">Daily (Send every day at this time)</option>
+                  <option value="YEARLY">Yearly (Send on this date every year - Birthday)</option>
+                </select>
+              </div>
+            ) : (
+              <div className="form-group">
+                <label className="field-label">Schedule Type</label>
+                <select
+                  className="select-input"
+                  value={type}
+                  onChange={(e) => setType(e.target.value)}
+                >
+                  <option value="RECURRING_DAILY">Daily Time Window (e.g. Gym, Sleep)</option>
+                  <option value="SPECIFIC_DATE">Specific Date (MM-DD or YYYY-MM-DD)</option>
+                </select>
+              </div>
+            )}
           </div>
 
-          {type === 'SPECIFIC_DATE' ? (
+          {/* Date / Time Inputs depending on mode */}
+          {executionMode === 'PROACTIVE_OUTBOUND_BROADCAST' ? (
+            <div className="form-grid-2">
+              <div className="form-group">
+                <label className="field-label">Exact Date & Time (YYYY-MM-DDTHH:mm)</label>
+                <input
+                  type="datetime-local"
+                  className="text-input"
+                  value={scheduledDateTime}
+                  onChange={(e) => setScheduledDateTime(e.target.value)}
+                  required={repeatInterval === 'ONCE'}
+                />
+              </div>
+              <div className="form-group">
+                <label className="field-label">Or Specific Daily Time (HH:mm)</label>
+                <input
+                  type="time"
+                  className="text-input"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                />
+              </div>
+            </div>
+          ) : type === 'SPECIFIC_DATE' ? (
             <div className="form-group">
               <label className="field-label">Date (MM-DD for yearly birthday, or YYYY-MM-DD)</label>
               <input
                 type="text"
                 className="text-input"
-                placeholder="e.g. 09-07 or 2026-09-07"
+                placeholder="e.g. 09-08 or 2026-09-08"
                 value={specificDate}
                 onChange={(e) => setSpecificDate(e.target.value)}
                 required
@@ -304,7 +408,7 @@ export default function ScheduleManager() {
           <div className="form-group schedule-audience-box">
             <label className="field-label">
               <Users size={14} className="text-blue" />
-              Target Numbers (Kin Numbers Par Yeh Reply Lagana Hai?)
+              Target Recipient Numbers (Kisko Message Bhejna Hai?)
             </label>
 
             <div className="radio-group-row">
@@ -316,7 +420,7 @@ export default function ScheduleManager() {
                   checked={targetAudienceType === 'ALL'}
                   onChange={() => setTargetAudienceType('ALL')}
                 />
-                <span>Sabhi Whitelisted Contacts (All Allowed Numbers)</span>
+                <span>Sabhi Whitelisted Contacts ({whitelistContacts.length})</span>
               </label>
 
               <label className="radio-label">
@@ -327,7 +431,7 @@ export default function ScheduleManager() {
                   checked={targetAudienceType === 'SPECIFIC_NUMBERS'}
                   onChange={() => setTargetAudienceType('SPECIFIC_NUMBERS')}
                 />
-                <span>Specific Numbers Only (Select Selected Contacts)</span>
+                <span>Specific Selected Contacts Only</span>
               </label>
             </div>
 
@@ -354,12 +458,12 @@ export default function ScheduleManager() {
 
                 <div style={{ marginTop: '10px' }}>
                   <label className="field-label" style={{ fontSize: '0.78rem' }}>
-                    Ya koi aur Number daalein (Comma separated):
+                    Ya koi aur WhatsApp Number daalein (Comma separated):
                   </label>
                   <input
                     type="text"
                     className="text-input"
-                    placeholder="+918797871221, +918318741186"
+                    placeholder="+919876543210, +919123456789"
                     value={customPhoneInput}
                     onChange={(e) => setCustomPhoneInput(e.target.value)}
                   />
@@ -369,11 +473,13 @@ export default function ScheduleManager() {
           </div>
 
           <div className="form-group">
-            <label className="field-label">Predefined WhatsApp Auto-Reply Message</label>
+            <label className="field-label">
+              {executionMode === 'PROACTIVE_OUTBOUND_BROADCAST' ? 'Direct WhatsApp Message to Send' : 'Predefined WhatsApp Auto-Reply Message'}
+            </label>
             <textarea
               className="textarea-input"
               rows={3}
-              placeholder="e.g. Bhai abhi main Gym me workout kar raha hoon (6:00 PM - 8:00 PM). Free hoke aapse baat karta hoon!"
+              placeholder={executionMode === 'PROACTIVE_OUTBOUND_BROADCAST' ? 'e.g. Happy Birthday bhai! 🎂 Wish you lots of happiness and success ❤️' : 'e.g. Bhai abhi main Gym me workout kar raha hoon. Free hoke reply karta hoon!'}
               value={autoReplyText}
               onChange={(e) => setAutoReplyText(e.target.value)}
               required
@@ -385,7 +491,7 @@ export default function ScheduleManager() {
               Cancel
             </button>
             <button type="submit" className="btn-primary" disabled={submitting}>
-              {submitting ? 'Saving...' : 'Save Schedule'}
+              {submitting ? 'Saving...' : 'Save & Schedule'}
             </button>
           </div>
         </form>
@@ -399,6 +505,7 @@ export default function ScheduleManager() {
           <div className="empty-state">No schedules added yet. Add one above!</div>
         ) : (
           schedules.map((schedule) => {
+            const isProactive = schedule.executionMode === 'PROACTIVE_OUTBOUND_BROADCAST';
             const isLive = schedule.isActive && schedule.isCurrentlyActive;
             const targetCount = Array.isArray(schedule.targetPhoneNumbers) ? schedule.targetPhoneNumbers.length : 0;
 
@@ -406,31 +513,66 @@ export default function ScheduleManager() {
               <div
                 key={schedule._id}
                 className={`schedule-item-card ${isLive ? 'active-schedule-glow' : ''}`}
+                style={{
+                  borderLeft: `4px solid ${isProactive ? '#a855f7' : '#25D366'}`,
+                }}
               >
                 <div className="schedule-item-top">
                   <div className="schedule-item-title-row">
                     <div className="schedule-mini-icon">
-                      {getScheduleIcon(schedule.title)}
+                      {getScheduleIcon(schedule.title, schedule.executionMode)}
                     </div>
                     <div>
-                      <h4 className="schedule-item-title">{schedule.title}</h4>
-                      <div className="schedule-timing-badge">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <h4 className="schedule-item-title" style={{ margin: 0 }}>{schedule.title}</h4>
+                        <span
+                          style={{
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            padding: '2px 7px',
+                            borderRadius: 10,
+                            background: isProactive ? 'rgba(168,85,247,0.18)' : 'rgba(37,211,102,0.18)',
+                            color: isProactive ? '#c084fc' : '#4ade80',
+                            border: `1px solid ${isProactive ? 'rgba(168,85,247,0.4)' : 'rgba(37,211,102,0.4)'}`,
+                          }}
+                        >
+                          {isProactive ? '📤 PROACTIVE AUTO-SEND' : '📥 INCOMING AUTO-REPLY'}
+                        </span>
+                      </div>
+
+                      <div className="schedule-timing-badge" style={{ marginTop: 4 }}>
                         <Clock size={12} />
                         <span>
-                          {schedule.type === 'SPECIFIC_DATE'
+                          {isProactive
+                            ? schedule.scheduledDateTime
+                              ? `At: ${schedule.scheduledDateTime.replace('T', ' ')}`
+                              : `Daily at: ${schedule.startTime}`
+                            : schedule.type === 'SPECIFIC_DATE'
                             ? `Date: ${schedule.specificDate}`
                             : `${schedule.startTime} - ${schedule.endTime}`}
                         </span>
                         <span className="schedule-target-tag">
                           <Users size={11} />
-                          {targetCount > 0 ? `${targetCount} Specific Numbers` : 'All Whitelist Contacts'}
+                          {targetCount > 0 ? `${targetCount} Target Numbers` : 'All Whitelist Contacts'}
                         </span>
                       </div>
                     </div>
                   </div>
 
                   <div className="schedule-actions-row">
-                    {isLive ? (
+                    {isProactive ? (
+                      schedule.isExecuted ? (
+                        <span className="status-pill healthy">
+                          <CheckCircle2 size={12} />
+                          Sent Successfully
+                        </span>
+                      ) : (
+                        <span className="status-pill scheduled">
+                          <Clock size={12} />
+                          Scheduled
+                        </span>
+                      )
+                    ) : isLive ? (
                       <span className="status-pill healthy" title="Matching current time right now">
                         <span className="pulse-dot"></span>
                         Active Right Now
@@ -451,14 +593,14 @@ export default function ScheduleManager() {
                       title={schedule.isActive ? 'Pause Schedule' : 'Activate Schedule'}
                     >
                       {schedule.isActive ? (
-                        <ToggleRight size={26} className="text-emerald" />
+                        <ToggleRight size={22} className="text-emerald" />
                       ) : (
-                        <ToggleLeft size={26} className="text-muted" />
+                        <ToggleLeft size={22} className="text-muted" />
                       )}
                     </button>
 
                     <button
-                      className="delete-contact-btn"
+                      className="icon-delete-btn"
                       onClick={() => handleDelete(schedule._id, schedule.title)}
                       title="Delete Schedule"
                     >
@@ -467,7 +609,6 @@ export default function ScheduleManager() {
                   </div>
                 </div>
 
-                {/* Specific numbers chip preview if configured */}
                 {targetCount > 0 && (
                   <div className="schedule-numbers-preview">
                     <span className="numbers-preview-label">Applies only to:</span>

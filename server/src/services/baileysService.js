@@ -9,7 +9,7 @@ const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
 const { generateGeminiReply } = require('./geminiService');
-const { checkActiveSchedule } = require('./scheduleService');
+const { checkActiveSchedule, startOutboundScheduler } = require('./scheduleService');
 const { buildDynamicPersonaPrompt, resolveContactPersona } = require('./personaService');
 const {
   getGeminiChatHistory,
@@ -189,6 +189,9 @@ async function initBaileys(forceRestart = false) {
         console.log(`✅ [Baileys] WhatsApp Web Connected Successfully!`);
         console.log(`📱 Connected as: ${connectedPhoneNumber}`);
         console.log(`======================================================\n`);
+
+        // Start proactive scheduled broadcast runner
+        startOutboundScheduler(() => sock);
       }
 
       if (connection === 'close') {

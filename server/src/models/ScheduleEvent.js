@@ -58,6 +58,34 @@ const scheduleEventSchema = new mongoose.Schema({
     type: Number,
     default: 1, // Higher priority schedule wins if multiple overlap
   },
+  // Schedule Execution Mode:
+  // - AUTO_REPLY_ON_INCOMING: Triggered when a contact messages during active hours (Gym, Sleep)
+  // - PROACTIVE_OUTBOUND_BROADCAST: Bot autonomously sends direct message at set Date & Time (Birthday, Office Task)
+  executionMode: {
+    type: String,
+    enum: ['AUTO_REPLY_ON_INCOMING', 'PROACTIVE_OUTBOUND_BROADCAST'],
+    default: 'AUTO_REPLY_ON_INCOMING',
+    index: true,
+  },
+  // Exact Date-Time for one-off or scheduled outbound broadcast (ISO string or datetime)
+  scheduledDateTime: {
+    type: String, // "YYYY-MM-DDTHH:mm" format (e.g. "2026-09-09T10:00")
+    default: null,
+  },
+  repeatInterval: {
+    type: String,
+    enum: ['ONCE', 'DAILY', 'WEEKLY', 'YEARLY'],
+    default: 'ONCE',
+  },
+  isExecuted: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  lastExecutedAt: {
+    type: Date,
+    default: null,
+  },
   createdAt: {
     type: Date,
     default: Date.now,

@@ -50,6 +50,9 @@ const createSchedule = async (req, res) => {
       targetRelationship,
       targetPhoneNumbers,
       priority,
+      executionMode,
+      scheduledDateTime,
+      repeatInterval,
     } = req.body;
 
     if (!title || !autoReplyText) {
@@ -77,6 +80,10 @@ const createSchedule = async (req, res) => {
       targetRelationship: targetRelationship || 'ALL',
       targetPhoneNumbers: parsedNumbers,
       priority: typeof priority === 'number' ? priority : 1,
+      executionMode: executionMode || 'AUTO_REPLY_ON_INCOMING',
+      scheduledDateTime: scheduledDateTime || null,
+      repeatInterval: repeatInterval || 'ONCE',
+      isExecuted: false,
     });
 
     res.status(201).json({
