@@ -19,6 +19,8 @@ import {
   Send,
   MessageCircle,
   Repeat,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 export default function ScheduleManager() {
@@ -28,6 +30,8 @@ export default function ScheduleManager() {
   const [currentTime, setCurrentTime] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [isExpandedAll, setIsExpandedAll] = useState(false);
+  const SCHEDULES_PER_PAGE = 3;
 
   // Form State
   const [title, setTitle] = useState('');
@@ -504,7 +508,7 @@ export default function ScheduleManager() {
         ) : schedules.length === 0 ? (
           <div className="empty-state">No schedules added yet. Add one above!</div>
         ) : (
-          schedules.map((schedule) => {
+          (isExpandedAll ? schedules : schedules.slice(0, SCHEDULES_PER_PAGE)).map((schedule) => {
             const isProactive = schedule.executionMode === 'PROACTIVE_OUTBOUND_BROADCAST';
             const isLive = schedule.isActive && schedule.isCurrentlyActive;
             const targetCount = Array.isArray(schedule.targetPhoneNumbers) ? schedule.targetPhoneNumbers.length : 0;
@@ -631,6 +635,29 @@ export default function ScheduleManager() {
               </div>
             );
           })
+        )}
+
+        {/* Space Optimization Expander */}
+        {schedules.length > SCHEDULES_PER_PAGE && (
+          <div className="space-optimizer-bar">
+            <button
+              type="button"
+              onClick={() => setIsExpandedAll(!isExpandedAll)}
+              className={`see-all-btn ${isExpandedAll ? 'expanded' : ''}`}
+            >
+              {isExpandedAll ? (
+                <>
+                  <ChevronUp size={15} />
+                  <span>Show Fewer Schedules (Collapse to {SCHEDULES_PER_PAGE})</span>
+                </>
+              ) : (
+                <>
+                  <ChevronDown size={15} />
+                  <span>See All Schedules ({schedules.length} Total)</span>
+                </>
+              )}
+            </button>
+          </div>
         )}
       </div>
     </div>

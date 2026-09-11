@@ -45,6 +45,7 @@ export default function App() {
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [isEnvModalOpen, setIsEnvModalOpen] = useState(false);
   const [selectedStatTab, setSelectedStatTab] = useState('ALL');
+  const [activeStudioTab, setActiveStudioTab] = useState('HUB');
 
   // Master Collapse/Expand All toggle key
   const [allOpenVersion, setAllOpenVersion] = useState(0);
@@ -176,166 +177,257 @@ export default function App() {
       {/* Metric Cards Bar */}
       <StatsBar stats={stats} onCardClick={handleStatCardClick} />
 
-      {/* Dashboard View Toolbar with Quick Collapse/Expand Controls */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 16,
-          padding: '8px 14px',
-          background: 'rgba(255, 255, 255, 0.03)',
-          border: '1px solid rgba(255, 255, 255, 0.06)',
-          borderRadius: 12,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Layers size={15} color="#25D366" />
-          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#94a3b8' }}>
-            Dashboard Sections
-          </span>
-        </div>
-
-        <div style={{ display: 'flex', gap: 8 }}>
+      {/* Studio Navigation Bar */}
+      <div className="studio-nav-wrapper">
+        <div className="studio-nav-bar">
           <button
             type="button"
-            className="chip-btn"
-            onClick={() => setAllSections(true)}
-            style={{ fontSize: '0.74rem', padding: '4px 10px' }}
+            className={`studio-nav-tab ${activeStudioTab === 'HUB' ? 'active' : ''}`}
+            onClick={() => setActiveStudioTab('HUB')}
           >
-            <Eye size={12} style={{ marginRight: 4 }} />
-            Expand All
+            <Sliders size={15} />
+            <span>Studio Hub & Feed</span>
           </button>
+
           <button
             type="button"
-            className="chip-btn"
-            onClick={() => setAllSections(false)}
-            style={{ fontSize: '0.74rem', padding: '4px 10px' }}
+            className={`studio-nav-tab ${activeStudioTab === 'WHITELIST' ? 'active' : ''}`}
+            onClick={() => setActiveStudioTab('WHITELIST')}
           >
-            <EyeOff size={12} style={{ marginRight: 4 }} />
-            Collapse All
+            <Users size={15} />
+            <span>VIP Whitelist</span>
+            {contacts.length > 0 && <span className="nav-badge">{contacts.length}</span>}
+          </button>
+
+          <button
+            type="button"
+            className={`studio-nav-tab ${activeStudioTab === 'CRM' ? 'active' : ''}`}
+            onClick={() => setActiveStudioTab('CRM')}
+          >
+            <Tag size={15} />
+            <span>CRM Leads</span>
+            {contacts.filter((c) => c.crmTag === 'HOT_LEAD').length > 0 && (
+              <span className="nav-badge" style={{ background: '#ff4d4d', color: '#fff' }}>
+                🔥 {contacts.filter((c) => c.crmTag === 'HOT_LEAD').length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            className={`studio-nav-tab ${activeStudioTab === 'LOCATION' ? 'active' : ''}`}
+            onClick={() => setActiveStudioTab('LOCATION')}
+          >
+            <MapPin size={15} />
+            <span>GPS Studio</span>
+            <span className="nav-badge" style={{ background: 'rgba(37,211,102,0.2)', color: '#25D366' }}>Live</span>
+          </button>
+
+          <button
+            type="button"
+            className={`studio-nav-tab ${activeStudioTab === 'SCHEDULES' ? 'active' : ''}`}
+            onClick={() => setActiveStudioTab('SCHEDULES')}
+          >
+            <Calendar size={15} />
+            <span>Smart Schedules</span>
+          </button>
+
+          <button
+            type="button"
+            className={`studio-nav-tab ${activeStudioTab === 'QR' ? 'active' : ''}`}
+            onClick={() => setActiveStudioTab('QR')}
+          >
+            <QrCode size={15} />
+            <span>WhatsApp Connect</span>
+          </button>
+
+          <button
+            type="button"
+            className={`studio-nav-tab ${activeStudioTab === 'ALL' ? 'active' : ''}`}
+            onClick={() => setActiveStudioTab('ALL')}
+          >
+            <Layers size={15} />
+            <span>All Modules</span>
           </button>
         </div>
       </div>
 
+      {/* Expand/Collapse Bar when viewing All Modules */}
+      {activeStudioTab === 'ALL' && (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 16,
+            padding: '8px 14px',
+            background: 'rgba(255, 255, 255, 0.03)',
+            border: '1px solid rgba(255, 255, 255, 0.06)',
+            borderRadius: 12,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Layers size={15} color="#25D366" />
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#94a3b8' }}>
+              All Studio Sections
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              className="chip-btn"
+              onClick={() => setAllSections(true)}
+              style={{ fontSize: '0.74rem', padding: '4px 10px' }}
+            >
+              <Eye size={12} style={{ marginRight: 4 }} />
+              Expand All
+            </button>
+            <button
+              type="button"
+              className="chip-btn"
+              onClick={() => setAllSections(false)}
+              style={{ fontSize: '0.74rem', padding: '4px 10px' }}
+            >
+              <EyeOff size={12} style={{ marginRight: 4 }} />
+              Collapse All
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic Module Content View */}
       <div key={allOpenVersion}>
-        {/* 1. Google Gemini AI Quota & Daily Limit Monitor */}
-        <CollapsibleSection
-          title="Google Gemini AI Quota & Failover Limits"
-          icon={Sparkles}
-          storageKey="quota"
-          defaultOpen={true}
-          subtitle="Real-time daily API limit tracker & automatic fallback model routing"
-        >
-          <GeminiQuotaCard onOpenEnvModal={() => setIsEnvModalOpen(true)} />
-        </CollapsibleSection>
+        {/* Module 1: Studio Hub & Feed */}
+        {(activeStudioTab === 'HUB' || activeStudioTab === 'ALL') && (
+          <>
+            <CollapsibleSection
+              title="Bot Control & Live Message Audit Log"
+              icon={Sliders}
+              storageKey="controls"
+              defaultOpen={true}
+              subtitle="Master toggle, anti-ban protection shield, persona customization, and real-time message feed"
+            >
+              <main className="dashboard-grid">
+                <BotControls
+                  settings={settings}
+                  onUpdateSettings={handleUpdateSettings}
+                  updating={updating}
+                />
 
-        {/* 2. Live Agent Handoff & Auto-Pause Guard */}
-        <CollapsibleSection
-          title="Live Agent Handoff & Auto-Pause Guard"
-          icon={ShieldAlert}
-          storageKey="handoff"
-          defaultOpen={true}
-          subtitle="Keyword triggers & 3-attempt consecutive failure auto-handover management"
-        >
-          <LiveAgentHandoffCard onHandoffChanged={handleRefresh} />
-        </CollapsibleSection>
+                <MessageLogs
+                  logs={logs}
+                  onClearLogs={handleClearLogs}
+                  loadingLogs={loadingLogs}
+                />
+              </main>
+            </CollapsibleSection>
 
-        {/* 3. WhatsApp Web Direct QR Connect */}
-        <CollapsibleSection
-          title="WhatsApp Web Direct QR Connect"
-          icon={QrCode}
-          storageKey="qr"
-          defaultOpen={true}
-          subtitle="Baileys WebSocket direct link with auto-reconnect and persistent session"
-        >
-          <WhatsAppWebCard />
-        </CollapsibleSection>
+            <CollapsibleSection
+              title="Google Gemini AI Quota & Failover Limits"
+              icon={Sparkles}
+              storageKey="quota"
+              defaultOpen={true}
+              subtitle="Real-time daily API limit tracker & automatic fallback model routing"
+            >
+              <GeminiQuotaCard onOpenEnvModal={() => setIsEnvModalOpen(true)} />
+            </CollapsibleSection>
 
-        {/* 4. VIP Whitelist Contacts & Relationship Roles Manager */}
-        <CollapsibleSection
-          title="VIP Whitelist Contacts & Access Control"
-          icon={Users}
-          storageKey="whitelist"
-          defaultOpen={true}
-          badge={
-            contacts.length > 0 ? (
-              <span style={{ fontSize: '0.73rem', background: 'rgba(37,211,102,0.15)', color: '#25D366', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>
-                {contacts.length} Contacts
-              </span>
-            ) : null
-          }
-          subtitle="Restrict automated AI replies exclusively to whitelisted numbers"
-        >
-          <WhitelistManager onContactsUpdated={handleRefresh} />
-        </CollapsibleSection>
+            <CollapsibleSection
+              title="Live Agent Handoff & Auto-Pause Guard"
+              icon={ShieldAlert}
+              storageKey="handoff"
+              defaultOpen={true}
+              subtitle="Keyword triggers & 3-attempt consecutive failure auto-handover management"
+            >
+              <LiveAgentHandoffCard onHandoffChanged={handleRefresh} />
+            </CollapsibleSection>
+          </>
+        )}
 
-        {/* 5. CRM Lead Auto-Tagging & Sentiment Dashboard */}
-        <CollapsibleSection
-          title="CRM Lead Auto-Tagging & Sentiment Dashboard"
-          icon={Tag}
-          storageKey="crm"
-          defaultOpen={true}
-          subtitle="Autonomous Gemini AI customer sentiment analysis and high-converting lead scoring"
-        >
-          <CrmLeadBoard contacts={contacts} onRefresh={fetchContacts} />
-        </CollapsibleSection>
+        {/* Module 2: VIP Whitelist Contacts & Personas */}
+        {(activeStudioTab === 'WHITELIST' || activeStudioTab === 'ALL') && (
+          <CollapsibleSection
+            title="VIP Whitelist Contacts & Access Control"
+            icon={Users}
+            storageKey="whitelist"
+            defaultOpen={true}
+            badge={
+              contacts.length > 0 ? (
+                <span style={{ fontSize: '0.73rem', background: 'rgba(37,211,102,0.15)', color: '#25D366', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>
+                  {contacts.length} Contacts
+                </span>
+              ) : null
+            }
+            subtitle="Restrict automated AI replies exclusively to whitelisted numbers"
+          >
+            <WhitelistManager onContactsUpdated={handleRefresh} />
+          </CollapsibleSection>
+        )}
 
-        {/* 6. Smart Schedules & Proactive Outbound Bot */}
-        <CollapsibleSection
-          title="Smart Schedules & Proactive Outbound Bot"
-          icon={Calendar}
-          storageKey="schedules"
-          defaultOpen={true}
-          subtitle="Predefined priority auto-replies and autonomous Date & Time direct WhatsApp messages"
-        >
-          <ScheduleManager />
-        </CollapsibleSection>
+        {/* Module 3: CRM Leads & Sentiment */}
+        {(activeStudioTab === 'CRM' || activeStudioTab === 'ALL') && (
+          <CollapsibleSection
+            title="CRM Lead Auto-Tagging & Sentiment Dashboard"
+            icon={Tag}
+            storageKey="crm"
+            defaultOpen={true}
+            subtitle="Autonomous Gemini AI customer sentiment analysis and high-converting lead scoring"
+          >
+            <CrmLeadBoard contacts={contacts} onRefresh={fetchContacts} />
+          </CollapsibleSection>
+        )}
 
-        {/* 7. Real-Time GPS Tracking & Location Auto-Sharing */}
-        <CollapsibleSection
-          title="Real-Time GPS Location Tracking & Auto-Sharing"
-          icon={MapPin}
-          storageKey="location"
-          defaultOpen={true}
-          subtitle="Live phone GPS tracking, native WhatsApp map pins, and smart 'kaha ho' intent auto-replies"
-        >
-          <LocationManager />
-        </CollapsibleSection>
+        {/* Module 4: GPS & Live Location */}
+        {(activeStudioTab === 'LOCATION' || activeStudioTab === 'ALL') && (
+          <CollapsibleSection
+            title="Real-Time GPS Location Tracking & Auto-Sharing"
+            icon={MapPin}
+            storageKey="location"
+            defaultOpen={true}
+            subtitle="Live phone GPS tracking, native WhatsApp map pins, and smart 'kaha ho' intent auto-replies"
+          >
+            <LocationManager />
+          </CollapsibleSection>
+        )}
 
-        {/* 8. Main Grid: Controls & Message Feed */}
-        <CollapsibleSection
-          title="Bot Control & Live Message Audit Log"
-          icon={Sliders}
-          storageKey="controls"
-          defaultOpen={true}
-          subtitle="Master toggle, anti-ban protection shield, persona customization, and real-time feed"
-        >
-          <main className="dashboard-grid">
-            <BotControls
-              settings={settings}
-              onUpdateSettings={handleUpdateSettings}
-              updating={updating}
-            />
+        {/* Module 5: Smart Schedules & Outbound */}
+        {(activeStudioTab === 'SCHEDULES' || activeStudioTab === 'ALL') && (
+          <CollapsibleSection
+            title="Smart Schedules & Proactive Outbound Bot"
+            icon={Calendar}
+            storageKey="schedules"
+            defaultOpen={true}
+            subtitle="Predefined priority auto-replies and autonomous Date & Time direct WhatsApp messages"
+          >
+            <ScheduleManager />
+          </CollapsibleSection>
+        )}
 
-            <MessageLogs
-              logs={logs}
-              onClearLogs={handleClearLogs}
-              loadingLogs={loadingLogs}
-            />
-          </main>
-        </CollapsibleSection>
+        {/* Module 6: WhatsApp Connect & Setup */}
+        {(activeStudioTab === 'QR' || activeStudioTab === 'ALL') && (
+          <>
+            <CollapsibleSection
+              title="WhatsApp Web Direct QR Connect"
+              icon={QrCode}
+              storageKey="qr"
+              defaultOpen={true}
+              subtitle="Baileys WebSocket direct link with auto-reconnect and persistent session"
+            >
+              <WhatsAppWebCard />
+            </CollapsibleSection>
 
-        {/* 8. WhatsApp Cloud API Setup Guide */}
-        <CollapsibleSection
-          title="WhatsApp Cloud API Setup Guide & Credentials"
-          icon={HelpCircle}
-          storageKey="guide"
-          defaultOpen={false}
-          subtitle="Optional Meta Cloud API webhook verification credentials and endpoints"
-        >
-          <SetupGuide envStatus={envStatus} />
-        </CollapsibleSection>
+            <CollapsibleSection
+              title="WhatsApp Cloud API Setup Guide & Credentials"
+              icon={HelpCircle}
+              storageKey="guide"
+              defaultOpen={false}
+              subtitle="Optional Meta Cloud API webhook verification credentials and endpoints"
+            >
+              <SetupGuide envStatus={envStatus} />
+            </CollapsibleSection>
+          </>
+        )}
       </div>
 
       {/* Webhook & Gemini Simulator Modal */}

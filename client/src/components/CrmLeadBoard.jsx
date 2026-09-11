@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Tag, Flame, AlertTriangle, Zap, Snowflake, Smile, Frown, HeartHandshake, HelpCircle, Filter } from 'lucide-react';
+import { Tag, Flame, AlertTriangle, Zap, Snowflake, Smile, Frown, HeartHandshake, HelpCircle, Filter, ChevronDown, ChevronUp } from 'lucide-react';
 
 const TAG_CONFIG = {
   HOT_LEAD: {
@@ -56,6 +56,11 @@ export default function CrmLeadBoard({ contacts = [], onRefresh }) {
     if (activeTab === 'ALL') return true;
     return tag === activeTab;
   });
+
+  // Space optimization state (Show top 6 leads with 'See All' toggle)
+  const [isExpandedAll, setIsExpandedAll] = useState(false);
+  const LEADS_PER_PAGE = 6;
+  const displayedContacts = isExpandedAll ? filteredContacts : filteredContacts.slice(0, LEADS_PER_PAGE);
 
   // Calculate quick stats
   const hotLeadsCount = contacts.filter((c) => c.crmTag === 'HOT_LEAD').length;
@@ -156,111 +161,136 @@ export default function CrmLeadBoard({ contacts = [], onRefresh }) {
           <p style={{ margin: 0, fontSize: '0.9rem' }}>No contacts matched the selected CRM tag filter.</p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-          {filteredContacts.map((c) => {
-            const tagKey = c.crmTag || 'NEUTRAL';
-            const tagCfg = TAG_CONFIG[tagKey] || TAG_CONFIG.NEUTRAL;
-            const TagIcon = tagCfg.icon;
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+            {displayedContacts.map((c) => {
+              const tagKey = c.crmTag || 'NEUTRAL';
+              const tagCfg = TAG_CONFIG[tagKey] || TAG_CONFIG.NEUTRAL;
+              const TagIcon = tagCfg.icon;
 
-            const sentKey = c.sentimentScore || 'NEUTRAL';
-            const sentCfg = SENTIMENT_CONFIG[sentKey] || SENTIMENT_CONFIG.NEUTRAL;
+              const sentKey = c.sentimentScore || 'NEUTRAL';
+              const sentCfg = SENTIMENT_CONFIG[sentKey] || SENTIMENT_CONFIG.NEUTRAL;
 
-            return (
-              <div
-                key={c._id || c.phoneNumber}
-                style={{
-                  background: 'rgba(18, 24, 38, 0.6)',
-                  border: `1px solid ${tagCfg.border}`,
-                  borderRadius: 12,
-                  padding: '14px 16px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justify: 'space-between',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                }}
-              >
-                <div>
-                  {/* Top Badges Row */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                    <span
+              return (
+                <div
+                  key={c._id || c.phoneNumber}
+                  style={{
+                    background: 'rgba(18, 24, 38, 0.6)',
+                    border: `1px solid ${tagCfg.border}`,
+                    borderRadius: 12,
+                    padding: '14px 16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  }}
+                >
+                  <div>
+                    {/* Top Badges Row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          background: tagCfg.bg,
+                          color: tagCfg.color,
+                          border: `1px solid ${tagCfg.border}`,
+                          padding: '3px 10px',
+                          borderRadius: 12,
+                          fontSize: '0.73rem',
+                          fontWeight: 700,
+                          letterSpacing: '0.5px',
+                        }}
+                      >
+                        <TagIcon size={13} />
+                        {tagCfg.label}
+                      </span>
+
+                      <span style={{ fontSize: '0.75rem', color: sentCfg.color, fontWeight: 600 }}>
+                        {sentCfg.emoji} {sentCfg.label}
+                      </span>
+                    </div>
+
+                    {/* Contact Name & Phone */}
+                    <h4 style={{ margin: '0 0 4px 0', fontSize: '0.98rem', fontWeight: 600, color: '#fff' }}>
+                      {c.name || c.relationship || 'WhatsApp Client'}
+                    </h4>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                      {c.phoneNumber}
+                    </div>
+
+                    {/* Intent Summary */}
+                    {c.intentSummary && (
+                      <div
+                        style={{
+                          marginTop: 10,
+                          padding: '8px 10px',
+                          background: 'rgba(255,255,255,0.03)',
+                          borderRadius: 6,
+                          fontSize: '0.78rem',
+                          color: '#cbd5e1',
+                          lineHeight: '1.35',
+                          borderLeft: `2px solid ${tagCfg.color}`,
+                        }}
+                      >
+                        <strong>AI Intent:</strong> {c.intentSummary}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Manual Tag Selector */}
+                  <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Tag Override:</span>
+                    <select
+                      value={tagKey}
+                      onChange={(e) => handleTagChange(c._id, e.target.value)}
+                      disabled={updatingId === c._id}
                       style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        background: tagCfg.bg,
+                        background: 'rgba(0,0,0,0.4)',
                         color: tagCfg.color,
                         border: `1px solid ${tagCfg.border}`,
-                        padding: '3px 10px',
-                        borderRadius: 12,
-                        fontSize: '0.73rem',
-                        fontWeight: 700,
-                        letterSpacing: '0.5px',
-                      }}
-                    >
-                      <TagIcon size={13} />
-                      {tagCfg.label}
-                    </span>
-
-                    <span style={{ fontSize: '0.75rem', color: sentCfg.color, fontWeight: 600 }}>
-                      {sentCfg.emoji} {sentCfg.label}
-                    </span>
-                  </div>
-
-                  {/* Contact Name & Phone */}
-                  <h4 style={{ margin: '0 0 4px 0', fontSize: '0.98rem', fontWeight: 600, color: '#fff' }}>
-                    {c.name || c.relationship || 'WhatsApp Client'}
-                  </h4>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                    {c.phoneNumber}
-                  </div>
-
-                  {/* Intent Summary */}
-                  {c.intentSummary && (
-                    <div
-                      style={{
-                        marginTop: 10,
-                        padding: '8px 10px',
-                        background: 'rgba(255,255,255,0.03)',
                         borderRadius: 6,
-                        fontSize: '0.78rem',
-                        color: '#cbd5e1',
-                        lineHeight: '1.35',
-                        borderLeft: `2px solid ${tagCfg.color}`,
+                        fontSize: '0.74rem',
+                        padding: '3px 6px',
+                        cursor: 'pointer',
+                        outline: 'none',
                       }}
                     >
-                      <strong>AI Intent:</strong> {c.intentSummary}
-                    </div>
-                  )}
+                      <option value="HOT_LEAD" style={{ background: '#121826', color: '#ff4d4d' }}>🔥 HOT LEAD</option>
+                      <option value="HIGH_PRIORITY" style={{ background: '#121826', color: '#eab308' }}>⚡ HIGH PRIORITY</option>
+                      <option value="SUPPORT_COMPLAINT" style={{ background: '#121826', color: '#ef4444' }}>🚨 SUPPORT COMPLAINT</option>
+                      <option value="COLD_LEAD" style={{ background: '#121826', color: '#38bdf8' }}>❄️ COLD LEAD</option>
+                      <option value="NEUTRAL" style={{ background: '#121826', color: '#94a3b8' }}>⚪ NEUTRAL</option>
+                    </select>
+                  </div>
                 </div>
+              );
+            })}
+          </div>
 
-                {/* Manual Tag Selector */}
-                <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Tag Override:</span>
-                  <select
-                    value={tagKey}
-                    onChange={(e) => handleTagChange(c._id, e.target.value)}
-                    disabled={updatingId === c._id}
-                    style={{
-                      background: 'rgba(0,0,0,0.4)',
-                      color: tagCfg.color,
-                      border: `1px solid ${tagCfg.border}`,
-                      borderRadius: 6,
-                      fontSize: '0.74rem',
-                      padding: '3px 6px',
-                      cursor: 'pointer',
-                      outline: 'none',
-                    }}
-                  >
-                    <option value="HOT_LEAD" style={{ background: '#121826', color: '#ff4d4d' }}>🔥 HOT LEAD</option>
-                    <option value="HIGH_PRIORITY" style={{ background: '#121826', color: '#eab308' }}>⚡ HIGH PRIORITY</option>
-                    <option value="SUPPORT_COMPLAINT" style={{ background: '#121826', color: '#ef4444' }}>🚨 SUPPORT COMPLAINT</option>
-                    <option value="COLD_LEAD" style={{ background: '#121826', color: '#38bdf8' }}>❄️ COLD LEAD</option>
-                    <option value="NEUTRAL" style={{ background: '#121826', color: '#94a3b8' }}>⚪ NEUTRAL</option>
-                  </select>
-                </div>
-              </div>
-            );
-          })}
+          {/* Space Optimization Expander */}
+          {filteredContacts.length > LEADS_PER_PAGE && (
+            <div className="space-optimizer-bar">
+              <button
+                type="button"
+                onClick={() => setIsExpandedAll(!isExpandedAll)}
+                className={`see-all-btn ${isExpandedAll ? 'expanded' : ''}`}
+              >
+                {isExpandedAll ? (
+                  <>
+                    <ChevronUp size={15} />
+                    <span>Show Fewer Leads (Collapse to {LEADS_PER_PAGE})</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown size={15} />
+                    <span>See All Leads ({filteredContacts.length} Total)</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

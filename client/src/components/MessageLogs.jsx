@@ -1,13 +1,17 @@
 import React, { useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Clock, MessageSquare, Trash2, User, Sparkles } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Clock, MessageSquare, Trash2, User, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
   const [activeTab, setActiveTab] = useState('ALL');
+  const [isExpandedAll, setIsExpandedAll] = useState(false);
+  const LOGS_PER_PAGE = 5;
 
   const filteredLogs = logs.filter((log) => {
     if (activeTab === 'ALL') return true;
     return log.status === activeTab;
   });
+
+  const displayedLogs = isExpandedAll ? filteredLogs : filteredLogs.slice(0, LOGS_PER_PAGE);
 
   const getStatusBadge = (status) => {
     switch (status) {
@@ -86,7 +90,7 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
             </p>
           </div>
         ) : (
-          filteredLogs.map((log) => (
+          displayedLogs.map((log) => (
             <div key={log._id} className="log-card">
               <div className="log-card-header">
                 <div className="sender-tag">
@@ -142,6 +146,29 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
               </div>
             </div>
           ))
+        )}
+
+        {/* Space Optimization Expander for Message Logs */}
+        {filteredLogs.length > LOGS_PER_PAGE && (
+          <div className="space-optimizer-bar">
+            <button
+              type="button"
+              onClick={() => setIsExpandedAll(!isExpandedAll)}
+              className={`see-all-btn ${isExpandedAll ? 'expanded' : ''}`}
+            >
+              {isExpandedAll ? (
+                <>
+                  <ChevronUp size={15} />
+                  <span>Show Fewer Messages (Collapse to {LOGS_PER_PAGE})</span>
+                </>
+              ) : (
+                <>
+                  <ChevronDown size={15} />
+                  <span>See All Message Logs ({filteredLogs.length} Total)</span>
+                </>
+              )}
+            </button>
+          </div>
         )}
       </div>
     </div>

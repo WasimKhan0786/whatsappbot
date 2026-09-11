@@ -2755,5 +2755,133 @@ body {
   }
 }
 
+/* ==========================================================================
+   Studio Module Navigation Bar (Modern Segmented Navigation)
+   ========================================================================== */
 
+.studio-nav-wrapper {
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-xl);
+  padding: 8px 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  position: sticky;
+  top: 16px;
+  z-index: 50;
+  margin-bottom: 8px;
+}
 
+.studio-nav-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding: 4px 2px;
+}
+
+.studio-nav-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.studio-nav-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: var(--radius-lg);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #94a3b8;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+}
+
+.studio-nav-tab:hover {
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
+  transform: translateY(-1px);
+}
+
+.studio-nav-tab.active {
+  color: #ffffff;
+  background: linear-gradient(135deg, rgba(37, 211, 102, 0.22) 0%, rgba(18, 140, 126, 0.28) 100%);
+  border: 1px solid rgba(37, 211, 102, 0.45);
+  box-shadow: 0 0 18px rgba(37, 211, 102, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+.studio-nav-tab.active svg {
+  color: #25D366;
+}
+
+.nav-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+}
+
+.studio-nav-tab.active .nav-badge {
+  background: #25D366;
+  color: #0b141a;
+}
+
+/* ==========================================================================
+   Space Optimization: 'See All' / 'Show Less' Button System
+   ========================================================================== */
+
+.space-optimizer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 0 6px;
+  margin-top: 12px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.see-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 22px;
+  border-radius: var(--radius-full);
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.85) 0%, rgba(15, 23, 42, 0.95) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.see-all-btn:hover {
+  background: linear-gradient(135deg, rgba(37, 211, 102, 0.18) 0%, rgba(18, 140, 126, 0.25) 100%);
+  border-color: rgba(37, 211, 102, 0.4);
+  color: #25D366;
+  box-shadow: 0 0 18px rgba(37, 211, 102, 0.22);
+  transform: translateY(-1px);
+}
+
+.see-all-btn svg {
+  transition: transform 0.2s ease;
+}
+
+.see-all-btn:hover svg {
+  transform: translateY(2px);
+}
+
+.see-all-btn.expanded:hover svg {
+  transform: translateY(-2px);
+}

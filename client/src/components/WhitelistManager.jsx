@@ -398,6 +398,11 @@ export default function WhitelistManager({ onContactsUpdated }) {
     return true;
   });
 
+  // Space optimization state (Show top 6 by default with 'See All' toggle)
+  const [isExpandedAll, setIsExpandedAll] = useState(false);
+  const CONTACTS_PER_PAGE = 6;
+  const displayedContacts = isExpandedAll ? filteredContacts : filteredContacts.slice(0, CONTACTS_PER_PAGE);
+
   return (
     <div className="card whitelist-manager-card" style={{ marginBottom: 24 }}>
       {/* Card Header */}
@@ -872,8 +877,9 @@ export default function WhitelistManager({ onContactsUpdated }) {
             </button>
           </div>
         ) : (
-          <div className="whitelist-contacts-grid">
-            {filteredContacts.map((c) => {
+          <>
+            <div className="whitelist-contacts-grid">
+              {displayedContacts.map((c) => {
               const badge = getRelationshipBadgeStyle(c.relationship);
               const pKey = c.persona || 'AUTO';
               const isRomantic = pKey === 'ROMANTIC' || (pKey === 'AUTO' && /wife|chipkali|jaan|gf|love/i.test(c.relationship + ' ' + (c.name || '')));
@@ -1218,8 +1224,31 @@ export default function WhitelistManager({ onContactsUpdated }) {
               );
             })}
           </div>
-        )}
-      </div>
+
+          {filteredContacts.length > CONTACTS_PER_PAGE && (
+            <div className="space-optimizer-bar">
+              <button
+                type="button"
+                onClick={() => setIsExpandedAll(!isExpandedAll)}
+                className={`see-all-btn ${isExpandedAll ? 'expanded' : ''}`}
+              >
+                {isExpandedAll ? (
+                  <>
+                    <ChevronUp size={15} />
+                    <span>Show Fewer Contacts (Collapse to {CONTACTS_PER_PAGE})</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown size={15} />
+                    <span>See All Contacts ({filteredContacts.length} Total)</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
 
       {/* ======================================================== */}
       {/* CHAT STYLE CLONER & LINGUISTIC TRAIT ANALYZER MODAL     */}
