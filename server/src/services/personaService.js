@@ -429,7 +429,7 @@ function analyzeIncomingMessageStyle(text) {
  * @param {string} [incomingMessage] - Real-time incoming WhatsApp message text
  * @returns {string} - Tailored dynamic system prompt
  */
-function buildDynamicPersonaPrompt(baseSystemPrompt, contact, senderPhone, incomingMessage = '') {
+function buildDynamicPersonaPrompt(baseSystemPrompt, contact, senderPhone, incomingMessage = '', mediaInfo = null) {
   const persona = resolveContactPersona(contact);
   const contactName = contact?.name ? `"${contact.name}"` : (contact?.relationship ? `"${contact.relationship}"` : 'this contact');
   const relationship = contact?.relationship || 'Friend';
@@ -517,6 +517,24 @@ SHAYARI GENERATION MANDATE:
 `;
   }
 
+  // Media Document & Image Style Mirroring Directive
+  let mediaDirective = '';
+  if (mediaInfo) {
+    mediaDirective = `
+======================================================
+[MEDIA FILE & DOCUMENT PROCESSING DIRECTIVE]
+Attached Media Type: ${mediaInfo.mediaType || 'Document/Image'}
+${mediaInfo.filename ? `Filename: ${mediaInfo.filename}` : ''}
+${mediaInfo.styleInfo?.styleDirective ? `Detected Style Guidance: ${mediaInfo.styleInfo.styleDirective}` : ''}
+
+MEDIA STYLE & CONTENT MIRRORING MANDATE:
+1. CONTENT ACCURACY: Accurately understand and respond to the text, data, or visuals present in the uploaded file.
+2. STYLE MIRRORING: Mirror the structure and register of the uploaded document (e.g., bulleted list if the document uses lists, formal financial review if invoice, concise casual note if informal).
+3. TOKEN CONSCIOUSNESS: Keep the answer concise, directly answering the user's inquiry or providing a clear digest without unnecessary verbosity.
+======================================================
+`;
+  }
+
   // Append real-time adaptive mirroring directive for the active incoming message
   const adaptiveMirroringDirective = `
 ======================================================
@@ -550,7 +568,7 @@ CORE MIRRORING MANDATE:
 ======================================================
 `;
 
-  return `${baseSystemPrompt || ''}\n\n${personaDirective}\n\n${adaptiveMirroringDirective}${shayariDirective ? `\n\n${shayariDirective}` : ''}`;
+  return `${baseSystemPrompt || ''}\n\n${personaDirective}\n\n${adaptiveMirroringDirective}${shayariDirective ? `\n\n${shayariDirective}` : ''}${mediaDirective ? `\n\n${mediaDirective}` : ''}`;
 }
 
 module.exports = {

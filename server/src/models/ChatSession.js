@@ -55,6 +55,18 @@ const chatSessionSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  messagesSentCount: {
+    type: Number,
+    default: 0,
+  },
+  isCapReached: {
+    type: Boolean,
+    default: false,
+  },
+  capReachedAt: {
+    type: Date,
+    default: null,
+  },
   gameState: {
     active: {
       type: Boolean,

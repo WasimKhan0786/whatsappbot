@@ -379,6 +379,55 @@ async function getActiveHandoffs() {
   }
 }
 
+/**
+ * Gets or initializes message count for a session
+ * @param {string} sessionId
+ * @returns {Promise<{ messagesSentCount: number, isCapReached: boolean }>}
+ */
+async function getSessionMessageCount(sessionId) {
+  const cleanSessionId = sessionId.trim();
+  try {
+    const session = await ChatSession.findOne({ sessionId: cleanSessionId });
+    return {
+      messagesSentCount: session?.messagesSentCount || 0,
+      isCapReached: session?.isCapReached || false,
+    };
+  } catch (err) {
+    return { messagesSentCount: 0, isCapReached: false };
+  }
+}
+
+/**
+ * Increments messages sent count for a session and checks if limit reached
+ * @param {string} sessionId
+ * @param {number} effectiveLimit
+ * @returns {Promise<{ currentCount: number, reachedCapNow: boolean }>}
+ */
+async function incrementSessionMessageCount(sessionId, effectiveLimit = 0) {
+  const cleanSessionId = sessionId.trim();
+  try {
+    let session = await ChatSession.findOne({ sessionId: cleanSessionId });
+    if (!session) {
+      session = new ChatSession({ sessionId: cleanSessionId });
+    }
+    session.messagesSentCount = (session.messagesSentCount || 0) + 1;
+    const reachedCapNow = effectiveLimit > 0 && session.messagesSentCount >= effectiveLimit;
+    if (reachedCapNow) {
+      session.isCapReached = true;
+      session.capReachedAt = new Date();
+    }
+    session.updatedAt = new Date();
+    await session.save();
+    return {
+      currentCount: session.messagesSentCount,
+      reachedCapNow,
+    };
+  } catch (err) {
+    console.warn(`[ChatHistoryService] Error updating session count for ${sessionId}:`, err.message);
+    return { currentCount: 1, reachedCapNow: false };
+  }
+}
+
 module.exports = {
   DEFAULT_MAX_MESSAGES,
   sanitizeHistoryForGemini,
@@ -393,5 +442,8 @@ module.exports = {
   resetFailedAttempts,
   resumeSession,
   getActiveHandoffs,
+  getSessionMessageCount,
+  incrementSessionMessageCount,
 };
+
 

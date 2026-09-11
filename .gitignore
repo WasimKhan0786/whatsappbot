@@ -36,3 +36,7 @@ yarn-error.log*
 # OS Files
 .DS_Store
 Thumbs.db
+
+# OCR language models
+*.traineddata
+server/*.traineddata

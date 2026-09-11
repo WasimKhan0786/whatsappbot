@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, Check, Phone, Save, Sparkles, Sliders, Shield, Clock, Zap } from 'lucide-react';
+import { Bot, Check, Phone, Save, Sparkles, Sliders, Shield, Clock, Zap, Globe } from 'lucide-react';
 
 const PRESETS = [
   {
@@ -26,6 +26,7 @@ const PRESETS = [
 
 export default function BotControls({ settings, onUpdateSettings, updating }) {
   const [isEnabled, setIsEnabled] = useState(settings?.isEnabled ?? true);
+  const [autoReplyAll, setAutoReplyAll] = useState(settings?.autoReplyAll ?? false);
   const [phoneNumber, setPhoneNumber] = useState(settings?.allowedPhoneNumber ?? '');
   const [prompt, setPrompt] = useState(settings?.systemPrompt ?? '');
   const [humanSimulationEnabled, setHumanSimulationEnabled] = useState(settings?.humanSimulationEnabled ?? true);
@@ -42,6 +43,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
   useEffect(() => {
     if (settings) {
       setIsEnabled(settings.isEnabled);
+      setAutoReplyAll(settings.autoReplyAll ?? false);
       setHumanSimulationEnabled(settings.humanSimulationEnabled ?? true);
       setMinReadingDelayMs(settings.minReadingDelayMs ?? 2000);
       setMaxReadingDelayMs(settings.maxReadingDelayMs ?? 6000);
@@ -59,12 +61,31 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
     }
   }, [settings, isEditingPhone, isEditingPrompt]);
 
-  // Instant toggle handler
+  // Instant master toggle handler
   const handleToggle = async () => {
     const nextState = !isEnabled;
     setIsEnabled(nextState);
     await onUpdateSettings({
       isEnabled: nextState,
+      autoReplyAll,
+      allowedPhoneNumber: phoneNumber,
+      systemPrompt: prompt,
+      humanSimulationEnabled,
+      minReadingDelayMs,
+      maxReadingDelayMs,
+      typingSpeedCPM,
+      defaultMaxMessagesPerContact: Number(defaultMaxMessagesPerContact),
+      limitReachedClosingMessage,
+    });
+  };
+
+  // Instant Global Auto-Reply All toggle handler
+  const handleAutoReplyAllToggle = async () => {
+    const nextState = !autoReplyAll;
+    setAutoReplyAll(nextState);
+    await onUpdateSettings({
+      isEnabled,
+      autoReplyAll: nextState,
       allowedPhoneNumber: phoneNumber,
       systemPrompt: prompt,
       humanSimulationEnabled,
@@ -82,6 +103,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
     setHumanSimulationEnabled(nextAntiBan);
     await onUpdateSettings({
       isEnabled,
+      autoReplyAll,
       allowedPhoneNumber: phoneNumber,
       systemPrompt: prompt,
       humanSimulationEnabled: nextAntiBan,
@@ -98,6 +120,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
     if (e) e.preventDefault();
     const res = await onUpdateSettings({
       isEnabled,
+      autoReplyAll,
       allowedPhoneNumber: phoneNumber,
       systemPrompt: prompt,
       humanSimulationEnabled,
@@ -152,6 +175,81 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
             <span className="toggle-knob"></span>
           </button>
         </div>
+      </div>
+
+      {/* 🌐 Global Auto-Reply All Toggle Card */}
+      <div
+        id="auto-reply-all-card"
+        style={{
+          marginTop: 14,
+          padding: '16px 20px',
+          background: autoReplyAll
+            ? 'linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(147, 51, 234, 0.14))'
+            : 'rgba(255, 255, 255, 0.03)',
+          border: `1px solid ${autoReplyAll ? 'rgba(129, 140, 248, 0.45)' : 'rgba(255, 255, 255, 0.08)'}`,
+          borderRadius: 12,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 16,
+          boxShadow: autoReplyAll ? '0 4px 20px rgba(99, 102, 241, 0.15)' : 'none',
+          transition: 'all 0.25s ease',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 10,
+              background: autoReplyAll ? 'rgba(99, 102, 241, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: `1px solid ${autoReplyAll ? 'rgba(129, 140, 248, 0.4)' : 'rgba(255, 255, 255, 0.1)'}`,
+            }}
+          >
+            <Globe size={22} color={autoReplyAll ? '#818cf8' : '#9ca3af'} />
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+              <h3 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 600, color: '#fff' }}>
+                Global Auto-Reply All Toggle
+              </h3>
+              <span
+                className="label-badge"
+                style={{
+                  background: autoReplyAll ? 'rgba(99, 102, 241, 0.25)' : 'rgba(107, 114, 128, 0.2)',
+                  color: autoReplyAll ? '#c7d2fe' : '#9ca3af',
+                  borderColor: autoReplyAll ? '#6366f1' : 'rgba(255, 255, 255, 0.1)',
+                }}
+              >
+                {autoReplyAll ? '🌐 Auto-Reply All: Active' : '🔒 Whitelist Filter Only'}
+              </span>
+            </div>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              {autoReplyAll
+                ? 'Active: Bypassing whitelist! Bot will reply to ALL incoming messages from anyone on WhatsApp.'
+                : 'Disabled: Security whitelist filter active. Bot only responds to numbers in your allowed list.'}
+            </p>
+          </div>
+        </div>
+
+        <button
+          id="auto-reply-all-toggle-btn"
+          type="button"
+          className={`toggle-switch ${autoReplyAll ? 'on' : ''}`}
+          onClick={handleAutoReplyAllToggle}
+          disabled={updating}
+          role="switch"
+          aria-checked={autoReplyAll}
+          aria-label="Toggle Global Auto-Reply All"
+          style={{
+            background: autoReplyAll ? '#6366f1' : undefined,
+          }}
+        >
+          <span className="toggle-knob"></span>
+        </button>
       </div>
 
       {/* 🛡️ Anti-Ban & Human Simulation Protection Shield */}
@@ -337,7 +435,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
               placeholder="0 (Unlimited)"
             />
             <div className="preset-chips" style={{ margin: 0 }}>
-              {[0, 3, 5, 10, 20].map((lim) => (
+              {[0, 3, 4, 5, 10, 20].map((lim) => (
                 <button
                   key={lim}
                   type="button"
@@ -357,7 +455,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
             </div>
           </div>
           <p className="input-hint">
-            <strong>Global Message Cap:</strong> Agar set kiya toh bot kisi bhi contact ko max utne hi messages bhejega, uske baad khud pause ho jayega (Quota bachega aur spamming rukegi). Whitelist list me individual contacts par alag limit bhi set kar sakte hain.
+            <strong>Global Message Cap:</strong> Chuney hue option (Unlimited, 3, 4, 5, 10) ke anusar bot har vyakti ko utne hi messages bhejega. <strong>Last message count khatam hote hi</strong> AI turant apna closing farewell message bhej kar auto-replies pause kar dega.
           </p>
         </div>
 
@@ -375,7 +473,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
               style={{ fontSize: '0.74rem', padding: '3px 8px' }}
               onClick={() => {
                 setLimitReachedClosingMessage(
-                  'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke AI WhatsApp Assistant se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much! ✨'
+                  'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke unke banaye huye  AI wasim bot se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much!'
                 );
               }}
             >
@@ -388,7 +486,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
             rows={3}
             value={limitReachedClosingMessage}
             onChange={(e) => setLimitReachedClosingMessage(e.target.value)}
-            placeholder="Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke AI WhatsApp Assistant se baat kar rahe the..."
+            placeholder="Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke unke banaye huye  AI wasim bot se baat kar rahe the..."
           />
           <p className="input-hint">
             <strong>Farewell Note:</strong> Jaise hi koi contact apni last message limit par pahuchega, bot final reply bhejne ke theek 1.5s baad yeh closing message bhej kar shant ho jayega.

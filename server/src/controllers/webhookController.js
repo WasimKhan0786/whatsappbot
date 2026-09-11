@@ -11,6 +11,8 @@ const {
   activateHandover,
   recordFailedAttempt,
   resetFailedAttempts,
+  getSessionMessageCount,
+  incrementSessionMessageCount,
 } = require("../services/chatHistoryService");
 const { processGameTurn } = require("../services/gameService");
 const { buildDynamicPersonaPrompt } = require("../services/personaService");
@@ -119,8 +121,9 @@ const handleIncoming = async (req, res) => {
       return res.status(200).json({ status: "bot_disabled" });
     }
 
-    // 2. Phone Number Filter: Process only from selected allowed phone numbers
-    if (settings.allowedPhoneNumber && settings.allowedPhoneNumber.trim() !== '') {
+    // 2. Phone Number Filter: Process only from selected allowed phone numbers unless autoReplyAll is enabled
+    const isAutoReplyAll = Boolean(settings.autoReplyAll);
+    if (!isAutoReplyAll && settings.allowedPhoneNumber && settings.allowedPhoneNumber.trim() !== '') {
       const allowedList = settings.allowedPhoneNumber
         .split(/[,;\n\s]+/)
         .map((num) => num.replace(/\D/g, ''))
@@ -134,7 +137,7 @@ const handleIncoming = async (req, res) => {
 
         if (!isAllowed) {
           console.log(
-            `🚫 Phone Filter: Sender ${sender} is not in your selected allowed numbers list. Message filtered.`
+            `🚫 Phone Filter: Sender ${sender} is not in your selected allowed numbers list and Auto-Reply All is OFF. Message filtered.`
           );
           await MessageLog.create({
             sender,
@@ -146,6 +149,25 @@ const handleIncoming = async (req, res) => {
           return res.status(200).json({ status: 'ignored_phone_mismatch' });
         }
       }
+    }
+
+    if (isAutoReplyAll) {
+      console.log(`🌐 Auto-Reply All is ACTIVE: Processing webhook message from ${sender}.`);
+    }
+
+    // 2.2 Global Max Message Cap Check
+    const effectiveLimit = settings.defaultMaxMessagesPerContact || 0;
+    const sessionCountInfo = await getSessionMessageCount(sender);
+    if (effectiveLimit > 0 && sessionCountInfo.messagesSentCount >= effectiveLimit) {
+      console.log(`🛑 MAX MESSAGE LIMIT REACHED (${sessionCountInfo.messagesSentCount}/${effectiveLimit}) for ${sender}. Skipping automated reply.`);
+      await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: `[Auto-Cap Reached (${sessionCountInfo.messagesSentCount}/${effectiveLimit}) - AI response skipped]`,
+        status: 'CAP_REACHED',
+        metaMessageId: messageId,
+      });
+      return res.status(200).json({ status: 'cap_reached' });
     }
 
     // 2.5 Check if session is paused for Live Agent
@@ -265,11 +287,38 @@ const handleIncoming = async (req, res) => {
         metaMessageId: messageId,
       });
 
-      // 6. Record to capped ChatSession history
+      // 6. Record to capped ChatSession history & increment message count
       try {
         await recordMessageExchange(sender, messageText, replyText);
       } catch (histErr) {
         console.warn('History record err:', histErr.message);
+      }
+
+      // Update message count & check if farewell closing announcement should be triggered
+      if (effectiveLimit > 0) {
+        const incResult = await incrementSessionMessageCount(sender, effectiveLimit);
+        if (incResult.reachedCapNow && incResult.currentCount === effectiveLimit) {
+          const closingText = (settings.limitReachedClosingMessage && settings.limitReachedClosingMessage.trim() !== '')
+            ? settings.limitReachedClosingMessage.trim()
+            : 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke unke banaye huye  AI wasim bot se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much!';
+
+          console.log(`🏁 Sending Auto-Closing Announcement to ${sender}...`);
+          setTimeout(async () => {
+            try {
+              await sendWhatsAppMessage(sender, closingText);
+              await MessageLog.create({
+                sender,
+                messageIn: `[Auto-Cap Limit (${incResult.currentCount}/${effectiveLimit}) Final Trigger]`,
+                messageOut: closingText,
+                status: 'CAP_CLOSING_SENT',
+                metaMessageId: `closing_${Date.now()}`,
+              });
+              await recordMessageExchange(sender, '[Limit Reached Announcement]', closingText);
+            } catch (closeErr) {
+              console.warn('Closing message send error:', closeErr.message);
+            }
+          }, 1500);
+        }
       }
 
       console.log(`✅ Successfully replied to ${sender}`);

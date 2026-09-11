@@ -41,6 +41,7 @@ const getSettings = async (req, res) => {
     res.json({
       settings: {
         isEnabled: settings.isEnabled,
+        autoReplyAll: settings.autoReplyAll ?? false,
         allowedPhoneNumber: settings.allowedPhoneNumber,
         systemPrompt: settings.systemPrompt,
         humanSimulationEnabled: settings.humanSimulationEnabled ?? true,
@@ -80,6 +81,7 @@ const updateSettings = async (req, res) => {
   try {
     const {
       isEnabled,
+      autoReplyAll,
       allowedPhoneNumber,
       systemPrompt,
       humanSimulationEnabled,
@@ -94,6 +96,10 @@ const updateSettings = async (req, res) => {
 
     if (typeof isEnabled === 'boolean') {
       settings.isEnabled = isEnabled;
+    }
+
+    if (typeof autoReplyAll === 'boolean') {
+      settings.autoReplyAll = autoReplyAll;
     }
 
     if (typeof allowedPhoneNumber === 'string') {
@@ -135,6 +141,7 @@ const updateSettings = async (req, res) => {
       message: 'Bot settings updated successfully',
       settings: {
         isEnabled: settings.isEnabled,
+        autoReplyAll: settings.autoReplyAll,
         allowedPhoneNumber: settings.allowedPhoneNumber,
         systemPrompt: settings.systemPrompt,
         humanSimulationEnabled: settings.humanSimulationEnabled,
@@ -393,7 +400,7 @@ const simulateIncoming = async (req, res) => {
           ? matchedContact.customClosingMessage.trim()
           : (settings.limitReachedClosingMessage && settings.limitReachedClosingMessage.trim() !== '')
           ? settings.limitReachedClosingMessage.trim()
-          : 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke AI WhatsApp Assistant se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much! ✨';
+          : 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke unke banaye huye  AI wasim bot se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much!';
 
         try {
           await MessageLog.create({

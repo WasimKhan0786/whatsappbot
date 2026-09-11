@@ -3,12 +3,14 @@ const {
   DisconnectReason,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
+  downloadMediaMessage,
 } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
 const { generateGeminiReply } = require('./geminiService');
+const { processIncomingMedia } = require('./mediaService');
 const { checkActiveSchedule, startOutboundScheduler } = require('./scheduleService');
 const { buildDynamicPersonaPrompt, resolveContactPersona } = require('./personaService');
 const {
@@ -19,6 +21,8 @@ const {
   activateHandover,
   recordFailedAttempt,
   resetFailedAttempts,
+  getSessionMessageCount,
+  incrementSessionMessageCount,
 } = require('./chatHistoryService');
 const { processGameTurn } = require('./gameService');
 const { analyzeAndTagContact } = require('./crmService');
@@ -97,8 +101,47 @@ function getMessageText(message) {
     message.extendedTextMessage?.text ||
     message.imageMessage?.caption ||
     message.videoMessage?.caption ||
+    message.documentMessage?.caption ||
+    message.documentWithCaptionMessage?.message?.documentMessage?.caption ||
     ''
   );
+}
+
+function getMediaDetails(message) {
+  if (!message) return null;
+  const doc = message.documentMessage || message.documentWithCaptionMessage?.message?.documentMessage;
+  const img = message.imageMessage || message.viewOnceMessage?.message?.imageMessage || message.viewOnceMessageV2?.message?.imageMessage;
+  const aud = message.audioMessage;
+
+  if (doc) {
+    return {
+      type: 'document',
+      mimeType: doc.mimetype || 'application/pdf',
+      fileName: doc.fileName || 'document.pdf',
+      caption: doc.caption || '',
+      rawMessage: doc,
+    };
+  }
+  if (img) {
+    return {
+      type: 'image',
+      mimeType: img.mimetype || 'image/jpeg',
+      fileName: 'image.jpg',
+      caption: img.caption || '',
+      rawMessage: img,
+    };
+  }
+  if (aud) {
+    return {
+      type: 'audio',
+      mimeType: aud.mimetype || 'audio/ogg',
+      fileName: aud.ptt ? 'voice_note.ogg' : 'audio.mp3',
+      caption: '',
+      isPtt: Boolean(aud.ptt),
+      rawMessage: aud,
+    };
+  }
+  return null;
 }
 
 /**
@@ -247,7 +290,19 @@ async function initBaileys(forceRestart = false) {
 
         // Resolve real phone number (even if WhatsApp uses LID addressing like @lid)
         const senderPhone = await resolveSenderPhoneNumber(senderJid, msg);
-        const messageText = getMessageText(msg.message);
+        const mediaDetails = getMediaDetails(msg.message);
+        let messageText = getMessageText(msg.message);
+
+        // If media is present without typed caption, set descriptive placeholder
+        if (mediaDetails && (!messageText || messageText.trim() === '')) {
+          if (mediaDetails.type === 'document') {
+            messageText = `[Sent Document: ${mediaDetails.fileName}]`;
+          } else if (mediaDetails.type === 'audio') {
+            messageText = mediaDetails.isPtt ? '[Sent Voice Note]' : '[Sent Audio Message]';
+          } else {
+            messageText = '[Sent Image]';
+          }
+        }
 
         if (!messageText || messageText.trim() === '') {
           continue;
@@ -278,7 +333,8 @@ async function initBaileys(forceRestart = false) {
             console.warn('[Baileys] Contact lookup warning:', cErr.message);
           }
 
-          // Whitelist check: strictly only reply to selected numbers (either in WhitelistContact or allowedPhoneNumber string)
+          // Whitelist check: strictly only reply to selected numbers unless autoReplyAll is ON
+          const isAutoReplyAll = Boolean(settings.autoReplyAll);
           const rawAllowed = settings.allowedPhoneNumber || '';
           const allowedList = rawAllowed
             .split(/[,;\n\s]+/)
@@ -289,8 +345,8 @@ async function initBaileys(forceRestart = false) {
             (allowed) => cleanSender === allowed || cleanSender.endsWith(allowed) || allowed.endsWith(cleanSender)
           );
 
-          if (!matchedContact && !isAllowedByString && (allowedList.length > 0 || rawAllowed.trim() !== '')) {
-            console.log(`[Baileys] 🔒 Message from ${senderPhone} ignored (not in selected numbers list).`);
+          if (!isAutoReplyAll && !matchedContact && !isAllowedByString && (allowedList.length > 0 || rawAllowed.trim() !== '')) {
+            console.log(`[Baileys] 🔒 Message from ${senderPhone} ignored (not in selected numbers list and Auto-Reply All is OFF).`);
             try {
               await MessageLog.create({
                 sender: senderPhone,
@@ -303,18 +359,30 @@ async function initBaileys(forceRestart = false) {
             continue;
           }
 
+          if (isAutoReplyAll && !matchedContact && !isAllowedByString) {
+            console.log(`[Baileys] 🌐 Auto-Reply All is ACTIVE: Processing incoming message from unlisted contact ${senderPhone}.`);
+          }
+
           // 📊 CHECK PER-CONTACT & GLOBAL MAX MESSAGE LIMIT (AUTO-CAP CONTROLLER)
           const effectiveLimit = matchedContact && typeof matchedContact.maxMessageLimit === 'number' && matchedContact.maxMessageLimit > 0
             ? matchedContact.maxMessageLimit
             : (settings.defaultMaxMessagesPerContact || 0);
 
-          if (effectiveLimit > 0 && matchedContact && (matchedContact.messagesSentCount || 0) >= effectiveLimit) {
-            console.log(`[Baileys] 🛑 MAX MESSAGE LIMIT REACHED (${matchedContact.messagesSentCount}/${effectiveLimit}) for ${senderPhone}. Skipping automated reply.`);
+          let currentMsgCount = 0;
+          if (matchedContact) {
+            currentMsgCount = matchedContact.messagesSentCount || 0;
+          } else {
+            const sessionInfo = await getSessionMessageCount(senderPhone);
+            currentMsgCount = sessionInfo.messagesSentCount;
+          }
+
+          if (effectiveLimit > 0 && currentMsgCount >= effectiveLimit) {
+            console.log(`[Baileys] 🛑 MAX MESSAGE LIMIT REACHED (${currentMsgCount}/${effectiveLimit}) for ${senderPhone}. Skipping automated reply.`);
             try {
               await MessageLog.create({
                 sender: senderPhone,
                 messageIn: messageText,
-                messageOut: `[Auto-Cap Reached (${matchedContact.messagesSentCount}/${effectiveLimit}) - AI response skipped]`,
+                messageOut: `[Auto-Cap Reached (${currentMsgCount}/${effectiveLimit}) - AI response skipped]`,
                 status: 'CAP_REACHED',
                 metaMessageId: msg.key.id || `baileys_${Date.now()}`,
               });
@@ -388,9 +456,38 @@ async function initBaileys(forceRestart = false) {
             continue;
           }
 
+          // Process attached media (PDF or Image) with token efficiency optimizations
+          let processedMedia = null;
+          if (mediaDetails) {
+            try {
+              console.log(`[Baileys] 📥 Downloading attached media (${mediaDetails.mimeType})...`);
+              const mediaBuffer = await downloadMediaMessage(
+                msg,
+                'buffer',
+                {},
+                {
+                  logger: pino({ level: 'silent' }),
+                  reuploadRequest: sock.updateMediaMessage,
+                }
+              );
+
+              if (mediaBuffer && mediaBuffer.length > 0) {
+                processedMedia = await processIncomingMedia({
+                  buffer: mediaBuffer,
+                  mimeType: mediaDetails.mimeType,
+                  filename: mediaDetails.fileName,
+                  caption: mediaDetails.caption || (messageText.startsWith('[Sent ') ? '' : messageText),
+                });
+                console.log(`[Baileys] 📎 Processed incoming media: ${processedMedia.mediaType} (${processedMedia.tokenOptimizationSummary})`);
+              }
+            } catch (mediaErr) {
+              console.warn(`[Baileys] Error processing incoming media:`, mediaErr.message);
+            }
+          }
+
           // Build isolated dynamic persona & tone directive tailored for this active contact with real-time style mirroring
           const persona = resolveContactPersona(matchedContact);
-          const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, senderPhone, messageText);
+          const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, senderPhone, messageText, processedMedia);
           const contactDisplayName = matchedContact?.name || matchedContact?.relationship || senderPhone;
           if (matchedContact?.styleProfile?.hasCustomStyle) {
             console.log(`[Baileys] 🧬 EXCLUSIVE CHAT STYLE ACTIVE for ${contactDisplayName} (${matchedContact.styleProfile.tone || 'Learned'})`);
@@ -451,7 +548,7 @@ async function initBaileys(forceRestart = false) {
           if (!replyText) {
             try {
               const chatHistory = await getGeminiChatHistory(senderPhone);
-              replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
+              replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory, processedMedia);
               await resetFailedAttempts(senderPhone);
             } catch (aiErr) {
               console.warn(`[Baileys] Gemini generation error:`, aiErr.message);
@@ -502,10 +599,13 @@ async function initBaileys(forceRestart = false) {
           await sock.sendMessage(senderJid, { text: replyText });
           console.log(`[Anti-Ban Shield] ✅ Message naturally delivered to ${senderPhone}: "${replyText.substring(0, 75)}..."`);
 
-          // Update message count for contact & check if limit reached
+          // Update message count for contact / session & check if limit reached
+          let updatedCount = 0;
+          let reachedCapNow = false;
+
           if (matchedContact) {
             matchedContact.messagesSentCount = (matchedContact.messagesSentCount || 0) + 1;
-            const reachedCapNow = effectiveLimit > 0 && matchedContact.messagesSentCount >= effectiveLimit;
+            reachedCapNow = effectiveLimit > 0 && matchedContact.messagesSentCount >= effectiveLimit;
             if (reachedCapNow) {
               matchedContact.isCapReached = true;
               matchedContact.capReachedAt = new Date();
@@ -514,47 +614,57 @@ async function initBaileys(forceRestart = false) {
             try {
               await matchedContact.save();
             } catch (saveCountErr) {
-              console.warn('[Baileys] Error saving message count:', saveCountErr.message);
+              console.warn('[Baileys] Error saving contact message count:', saveCountErr.message);
             }
-
-            // 🎯 Send Farewell Auto-Closing Announcement when limit is reached!
-            if (reachedCapNow && matchedContact.messagesSentCount === effectiveLimit) {
-              const closingText = (matchedContact.customClosingMessage && matchedContact.customClosingMessage.trim() !== '')
-                ? matchedContact.customClosingMessage.trim()
-                : (settings.limitReachedClosingMessage && settings.limitReachedClosingMessage.trim() !== '')
-                ? settings.limitReachedClosingMessage.trim()
-                : 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke AI WhatsApp Assistant se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much! ✨';
-
-              console.log(`[Baileys] 🏁 Sending Auto-Closing Announcement to ${senderPhone}...`);
-
-              setTimeout(async () => {
-                try {
-                  await sock.sendPresenceUpdate('composing', senderJid);
-                  await new Promise((resolve) => setTimeout(resolve, 1200));
-                  await sock.sendPresenceUpdate('paused', senderJid);
-                  await sock.sendMessage(senderJid, { text: closingText });
-                  console.log(`[Baileys] ✅ Auto-Closing Announcement delivered to ${senderPhone}: "${closingText.substring(0, 60)}..."`);
-
-                  await MessageLog.create({
-                    sender: senderPhone,
-                    messageIn: `[Auto-Cap Limit (${matchedContact.messagesSentCount}/${effectiveLimit}) Final Trigger]`,
-                    messageOut: closingText,
-                    status: 'CAP_CLOSING_SENT',
-                    metaMessageId: `closing_${Date.now()}`,
-                  });
-                  await recordMessageExchange(senderPhone, '[Limit Reached Announcement]', closingText);
-                } catch (closingErr) {
-                  console.warn('[Baileys] Failed to dispatch closing farewell message:', closingErr.message);
-                }
-              }, 1800);
+            updatedCount = matchedContact.messagesSentCount;
+          } else {
+            const incResult = await incrementSessionMessageCount(senderPhone, effectiveLimit);
+            updatedCount = incResult.currentCount;
+            reachedCapNow = incResult.reachedCapNow;
+            if (reachedCapNow) {
+              console.log(`[Baileys] 🔒 Auto-Cap Reached for non-whitelisted session ${senderPhone}: Sent ${updatedCount}/${effectiveLimit} messages. Auto-replies paused.`);
             }
+          }
+
+          // 🎯 Send Farewell Auto-Closing Announcement when limit is reached!
+          if (reachedCapNow && updatedCount === effectiveLimit) {
+            const closingText = (matchedContact?.customClosingMessage && matchedContact.customClosingMessage.trim() !== '')
+              ? matchedContact.customClosingMessage.trim()
+              : (settings.limitReachedClosingMessage && settings.limitReachedClosingMessage.trim() !== '')
+              ? settings.limitReachedClosingMessage.trim()
+              : 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke unke banaye huye  AI wasim bot se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much!';
+
+            console.log(`[Baileys] 🏁 Sending Auto-Closing Announcement to ${senderPhone}...`);
+
+            setTimeout(async () => {
+              try {
+                await sock.sendPresenceUpdate('composing', senderJid);
+                await new Promise((resolve) => setTimeout(resolve, 1200));
+                await sock.sendPresenceUpdate('paused', senderJid);
+                await sock.sendMessage(senderJid, { text: closingText });
+                console.log(`[Baileys] ✅ Auto-Closing Announcement delivered to ${senderPhone}: "${closingText.substring(0, 60)}..."`);
+
+                await MessageLog.create({
+                  sender: senderPhone,
+                  messageIn: `[Auto-Cap Limit (${updatedCount}/${effectiveLimit}) Final Trigger]`,
+                  messageOut: closingText,
+                  status: 'CAP_CLOSING_SENT',
+                  metaMessageId: `closing_${Date.now()}`,
+                });
+                await recordMessageExchange(senderPhone, '[Limit Reached Announcement]', closingText);
+              } catch (closingErr) {
+                console.warn('[Baileys] Failed to dispatch closing farewell message:', closingErr.message);
+              }
+            }, 1800);
           }
 
           // Save to database message logs
           try {
             await MessageLog.create({
               sender: senderPhone,
-              messageIn: messageText,
+              messageIn: processedMedia
+                ? `${messageText} [Media: ${processedMedia.mediaType} - ${processedMedia.tokenOptimizationSummary}]`
+                : messageText,
               messageOut: replyText,
               status: failResult?.triggeredHandover ? 'AGENT_HANDOFF_TRIGGERED' : 'PROCESSED',
               metaMessageId: msg.key.id || `baileys_${Date.now()}`,
