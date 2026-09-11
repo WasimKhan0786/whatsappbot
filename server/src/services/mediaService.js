@@ -242,24 +242,14 @@ async function processIncomingMedia({ buffer, mimeType, filename = '', caption =
 
     const styleInfo = analyzeMediaStyle(ocrResult.text, caption);
 
-    // If the image primarily contains text (e.g. screenshot, typed notice, flyer with text)
-    // and OCR extracted high-quality text, we can optimize tokens by sending the extracted text
-    if (hasRichText && ocrResult.confidence > 60) {
-      console.log(`[MediaService] 🖼️ Image OCR successful (${ocrResult.text.length} chars, conf: ${ocrResult.confidence.toFixed(1)}%). Using text representation for token efficiency.`);
-      return {
-        mediaType: 'image_text',
-        mimeType,
-        extractedText: ocrResult.text,
-        caption: caption || '',
-        styleInfo,
-        inlineData: null, // Token optimization: Pure text sent to Gemini
-        tokenOptimizationSummary: `Extracted ${ocrResult.text.length} characters via OCR (Confidence: ${ocrResult.confidence.toFixed(0)}%). Omitted raw image tokens for optimal efficiency.`,
-      };
-    }
-
-    // If image is visual (diagram, photo, art, or low OCR text), compress it before sending to Gemini
+    // Always compress image for AI visual perception (capped at 1024px, 80% JPEG quality)
     const compression = await compressImageForAI(buffer);
     console.log(`[MediaService] 🖼️ Image compressed: ${compression.originalBytes}B -> ${compression.compressedBytes}B (${compression.reductionPercent}% reduction) for token efficiency.`);
+
+    const hasExtractedText = ocrResult.success && Boolean(ocrResult.text?.trim());
+    if (hasExtractedText) {
+      console.log(`[MediaService] 📝 Image OCR extracted ${ocrResult.text.length} chars (Conf: ${ocrResult.confidence.toFixed(0)}%).`);
+    }
 
     return {
       mediaType: 'image',
@@ -271,7 +261,7 @@ async function processIncomingMedia({ buffer, mimeType, filename = '', caption =
         mimeType: compression.mimeType,
         data: compression.buffer.toString('base64'),
       },
-      tokenOptimizationSummary: `Compressed image resolution to 1024px max JPEG (saved ${compression.reductionPercent}% payload bytes/tokens). Included visual data + any detected text.`,
+      tokenOptimizationSummary: `Compressed image to 1024px JPEG (${compression.reductionPercent}% byte reduction). Multimodal visual comprehension enabled${hasExtractedText ? ' + OCR text included' : ''}.`,
     };
   }
 

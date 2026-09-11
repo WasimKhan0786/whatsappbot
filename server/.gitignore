@@ -20,3 +20,9 @@ npm-debug.log*
 Thumbs.db
 .idea/
 .vscode/
+
+# Tesseract OCR & scratch files
+*.traineddata
+test_*.js
+reset_*.js
+

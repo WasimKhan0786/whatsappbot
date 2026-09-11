@@ -4,8 +4,12 @@
   "ignore": [
     "auth_info_baileys/**",
     "../auth_info_baileys/**",
+    "*.traineddata",
     "*.json",
-    "*.log"
+    "*.log",
+    "test_*.js",
+    "reset_*.js",
+    "*.tmp"
   ],
-  "delay": 1500
+  "delay": 2000
 }

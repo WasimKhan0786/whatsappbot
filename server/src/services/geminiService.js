@@ -35,22 +35,37 @@ async function generateGeminiReply(userMessage, customSystemPrompt, chatHistory 
     const fileLabel = mediaPayload.filename || (mediaPayload.mediaType === 'pdf' ? 'PDF Document' : (mediaPayload.mediaType === 'voice' ? 'Voice Note' : 'Attached Media'));
 
     if (mediaPayload.extractedText && mediaPayload.extractedText.trim() !== '') {
-      mediaSection += `\n\n--- [EXTRACTED CONTENT FROM ${fileLabel.toUpperCase()}] ---\n${mediaPayload.extractedText.trim()}\n--- [END OF ${fileLabel.toUpperCase()} CONTENT] ---`;
+      mediaSection = `--- [EXTRACTED CONTENT FROM ${fileLabel.toUpperCase()}] ---\n${mediaPayload.extractedText.trim()}\n--- [END OF ${fileLabel.toUpperCase()} CONTENT] ---`;
     }
 
     let styleDirective = '';
     if (mediaPayload.styleInfo?.styleDirective) {
-      styleDirective = `\n\n[STYLE & CONTENT MIRRORING DIRECTIVE]:\n${mediaPayload.styleInfo.styleDirective}\nEnsure your reply directly addresses the contents above and mirrors the style, structure, and language tone of the original file.`;
+      styleDirective = `[STYLE & CONTENT MIRRORING DIRECTIVE]:\n${mediaPayload.styleInfo.styleDirective}\nEnsure your reply directly addresses the contents above and mirrors the style, structure, and language tone of the original file.`;
     }
 
-    const combinedText = `${userText ? userText + '\n' : ''}${mediaSection}${styleDirective}`.trim();
-    const defaultActionPrompt = mediaPayload.mediaType === 'voice'
-      ? 'The user sent a WhatsApp voice message / audio note. Listen carefully to their spoken words, recognize their language, tone, and question, and respond with a natural, friendly WhatsApp reply matching their language and cadence.'
-      : `Please review the attached ${fileLabel}, analyze its content, and respond mirroring its style and tone.`;
-    const promptString = combinedText || defaultActionPrompt;
+    const isPlaceholderText = !userText || userText.trim() === '' || userText === '[Sent Image]' || userText.startsWith('[Sent ');
+
+    let actionPrompt = '';
+    if (mediaPayload.mediaType === 'image') {
+      if (isPlaceholderText) {
+        actionPrompt = 'The user sent an image / photo. Look closely at the visual content of this image, understand what is shown (objects, people, scenery, text, actions, colors, or meme), and respond with a natural, engaging WhatsApp reaction or commentary in your designated persona and language tone.';
+      } else {
+        actionPrompt = `The user sent an image with the message: "${userText}". Look at the attached image carefully, analyze what is shown, and answer their message/question while commenting naturally on the visual content.`;
+      }
+    } else if (mediaPayload.mediaType === 'voice') {
+      actionPrompt = 'The user sent a WhatsApp voice message / audio note. Listen carefully to their spoken words, recognize their language, tone, and question, and respond with a natural, friendly WhatsApp reply matching their language and cadence.';
+    } else if (mediaPayload.mediaType === 'pdf') {
+      actionPrompt = isPlaceholderText
+        ? 'Please review the extracted text from the user\'s PDF document, summarize or address its key contents, and respond politely mirroring its style.'
+        : `The user sent a PDF document with the comment: "${userText}". Review the extracted document content and respond directly to their query.`;
+    } else {
+      actionPrompt = `Please review the attached ${fileLabel}, analyze its content, and respond mirroring its style and tone.`;
+    }
+
+    const promptString = [actionPrompt, mediaSection, styleDirective].filter(Boolean).join('\n\n').trim();
 
     if (mediaPayload.inlineData) {
-      // Multimodal payload: compressed image + prompt text
+      // Multimodal payload: compressed image / audio + prompt text
       contentParts = [
         promptString,
         {
