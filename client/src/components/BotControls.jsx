@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, Check, Phone, Save, Sparkles, Sliders, Shield, Clock, Zap, Globe } from 'lucide-react';
+import { Bot, Check, Phone, Save, Sparkles, Sliders, Shield, Clock, Zap, Globe, RotateCcw } from 'lucide-react';
 
 const PRESETS = [
   {
@@ -39,6 +39,8 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
   const [isEditingPhone, setIsEditingPhone] = useState(false);
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [resettingAll, setResettingAll] = useState(false);
+  const [resetAllSuccess, setResetAllSuccess] = useState(false);
 
   useEffect(() => {
     if (settings) {
@@ -135,6 +137,24 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       setIsEditingPrompt(false);
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 3000);
+    }
+  };
+
+  // Global 1-Click Reset for all contact and session counters
+  const handleResetAllCounters = async () => {
+    if (!window.confirm('Kya aap sabhi contacts ke message counters 0 reset karna chahte hain? Sabhi contacts ke liye auto-replies unblock ho jayenge aur bot naye sire se reply karega.')) return;
+    setResettingAll(true);
+    try {
+      const res = await fetch('/api/settings/reset-all-counters', { method: 'POST' });
+      const json = await res.json();
+      if (json.success) {
+        setResetAllSuccess(true);
+        setTimeout(() => setResetAllSuccess(false), 4000);
+      }
+    } catch (err) {
+      console.error('Failed to reset all counters:', err);
+    } finally {
+      setResettingAll(false);
     }
   };
 
@@ -414,14 +434,42 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
 
         {/* Global Max Messages Per Contact (Auto-Cap Controller) */}
         <div className="control-group" style={{ marginTop: 16 }}>
-          <label className="control-label" htmlFor="global-limit-input">
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              📊 Global Max Messages Per Contact
-            </span>
-            <span className="label-badge" style={{ background: defaultMaxMessagesPerContact > 0 ? 'rgba(234, 179, 8, 0.2)' : 'rgba(34, 197, 94, 0.2)', color: defaultMaxMessagesPerContact > 0 ? '#facc15' : '#4ade80' }}>
-              {defaultMaxMessagesPerContact > 0 ? `Max ${defaultMaxMessagesPerContact} Replies` : 'Unlimited Default'}
-            </span>
-          </label>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 8 }}>
+            <label className="control-label" htmlFor="global-limit-input" style={{ margin: 0 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                📊 Global Max Messages Per Contact
+              </span>
+              <span className="label-badge" style={{ background: defaultMaxMessagesPerContact > 0 ? 'rgba(234, 179, 8, 0.2)' : 'rgba(34, 197, 94, 0.2)', color: defaultMaxMessagesPerContact > 0 ? '#facc15' : '#4ade80' }}>
+                {defaultMaxMessagesPerContact > 0 ? `Max ${defaultMaxMessagesPerContact} Replies` : 'Unlimited Default'}
+              </span>
+            </label>
+
+            <button
+              id="reset-all-counters-btn"
+              type="button"
+              onClick={handleResetAllCounters}
+              disabled={resettingAll}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '5px 12px',
+                background: resetAllSuccess ? 'rgba(34, 197, 94, 0.2)' : 'rgba(234, 179, 8, 0.15)',
+                border: `1px solid ${resetAllSuccess ? '#22c55e' : 'rgba(234, 179, 8, 0.4)'}`,
+                borderRadius: 8,
+                color: resetAllSuccess ? '#4ade80' : '#facc15',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+              }}
+              title="Sabhi contacts ke message counter 0 reset karein"
+            >
+              <RotateCcw size={13} style={{ animation: resettingAll ? 'spin 1s linear infinite' : 'none' }} />
+              <span>{resetAllSuccess ? '✅ Counters Reset to 0 (Unblocked)!' : (resettingAll ? 'Resetting...' : '🔄 Reset All Counters (0/Limit)')}</span>
+            </button>
+          </div>
+
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <input
               id="global-limit-input"
@@ -455,7 +503,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
             </div>
           </div>
           <p className="input-hint">
-            <strong>Global Message Cap:</strong> Chuney hue option (Unlimited, 3, 4, 5, 10) ke anusar bot har vyakti ko utne hi messages bhejega. <strong>Last message count khatam hote hi</strong> AI turant apna closing farewell message bhej kar auto-replies pause kar dega.
+            <strong>Global Message Cap:</strong> Chuney hue option (Unlimited, 3, 4, 5, 10) ke anusar bot har vyakti ko utne hi messages bhejega. <strong>Last message count khatam hote hi</strong> AI turant apna closing farewell message bhej kar auto-replies pause kar dega. Jab bhi aap chahein, upar diye <strong>"Reset All Counters"</strong> button se sabhi ke counters ko 0 reset karke dubara unblock kar sakte hain!
           </p>
         </div>
 

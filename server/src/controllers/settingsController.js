@@ -534,6 +534,32 @@ const clearSessionHistory = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/settings/reset-all-counters
+ * Globally resets all contact and session message counters back to 0 and unblocks all caps
+ */
+const resetAllMessageCounters = async (req, res) => {
+  try {
+    const r1 = await WhitelistContact.updateMany(
+      {},
+      { $set: { messagesSentCount: 0, isCapReached: false, capReachedAt: null } }
+    );
+    const r2 = await ChatSession.updateMany(
+      {},
+      { $set: { messagesSentCount: 0, isCapReached: false, capReachedAt: null } }
+    );
+    return res.json({
+      success: true,
+      message: `Successfully reset message counters for all contacts (${r1.modifiedCount}) and chat sessions (${r2.modifiedCount}). All auto-replies are active and unblocked!`,
+      contactsReset: r1.modifiedCount,
+      sessionsReset: r2.modifiedCount,
+    });
+  } catch (error) {
+    console.error('Error in resetAllMessageCounters:', error);
+    return res.status(500).json({ success: false, error: 'Failed to reset all message counters' });
+  }
+};
+
 module.exports = {
   getSettings,
   updateSettings,
@@ -544,4 +570,5 @@ module.exports = {
   resumeHandoffSession,
   getSessionHistory,
   clearSessionHistory,
+  resetAllMessageCounters,
 };

@@ -10,6 +10,7 @@ const {
   resumeHandoffSession,
   getSessionHistory,
   clearSessionHistory,
+  resetAllMessageCounters,
 } = require('../controllers/settingsController');
 
 const {
@@ -33,9 +34,10 @@ router.post('/env', updateEnvConfig);
 // Gemini Quota and Usage Metrics
 router.get('/quota', getGeminiQuota);
 
-// Settings management (bot enable/disable, allowed number, prompt)
+// Settings management (bot enable/disable, allowed number, prompt, global reset)
 router.get('/settings', getSettings);
 router.put('/settings', updateSettings);
+router.post('/settings/reset-all-counters', resetAllMessageCounters);
 
 // Whitelist Contacts & Relationship Management
 router.get('/whitelist', getContacts);

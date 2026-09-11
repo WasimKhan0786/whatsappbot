@@ -242,6 +242,20 @@ async function resetMessageCounter(req, res) {
     contact.capReachedAt = null;
     await contact.save();
 
+    // Also reset matching ChatSession in MongoDB
+    try {
+      const ChatSession = require('../models/ChatSession');
+      const cleanDigits = contact.phoneNumber.replace(/\D/g, '');
+      if (cleanDigits) {
+        await ChatSession.updateMany(
+          { sessionId: { $regex: cleanDigits } },
+          { $set: { messagesSentCount: 0, isCapReached: false, capReachedAt: null } }
+        );
+      }
+    } catch (sessionErr) {
+      console.warn('[WhitelistController] Session counter reset note:', sessionErr.message);
+    }
+
     res.json({
       success: true,
       message: `Message counter reset to 0 for ${contact.name || contact.phoneNumber}. Bot replies are unblocked!`,
