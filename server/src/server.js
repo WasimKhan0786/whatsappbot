@@ -7,6 +7,7 @@ const connectDB = require('./config/db');
 const webhookRoutes = require('./routes/webhookRoutes');
 const apiRoutes = require('./routes/apiRoutes');
 const whatsappWebRoutes = require('./routes/whatsappWebRoutes');
+const locationRoutes = require('./routes/locationRoutes');
 const { initBaileys } = require('./services/baileysService');
 const { seedDefaultSchedules } = require('./services/scheduleService');
 
@@ -44,6 +45,7 @@ app.use((req, res, next) => {
 app.use('/webhook', webhookRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/whatsapp-web', whatsappWebRoutes);
+app.use('/api/location', locationRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

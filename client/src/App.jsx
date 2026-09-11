@@ -13,6 +13,7 @@ import ScheduleManager from './components/ScheduleManager';
 import EnvConfigModal from './components/EnvConfigModal';
 import LiveAgentHandoffCard from './components/LiveAgentHandoffCard';
 import CrmLeadBoard from './components/CrmLeadBoard';
+import LocationManager from './components/LocationManager';
 import CollapsibleSection from './components/CollapsibleSection';
 import {
   Sparkles,
@@ -27,6 +28,7 @@ import {
   Eye,
   EyeOff,
   Layers,
+  MapPin,
 } from 'lucide-react';
 
 export default function App() {
@@ -290,7 +292,18 @@ export default function App() {
           <ScheduleManager />
         </CollapsibleSection>
 
-        {/* 7. Main Grid: Controls & Message Feed */}
+        {/* 7. Real-Time GPS Tracking & Location Auto-Sharing */}
+        <CollapsibleSection
+          title="Real-Time GPS Location Tracking & Auto-Sharing"
+          icon={MapPin}
+          storageKey="location"
+          defaultOpen={true}
+          subtitle="Live phone GPS tracking, native WhatsApp map pins, and smart 'kaha ho' intent auto-replies"
+        >
+          <LocationManager />
+        </CollapsibleSection>
+
+        {/* 8. Main Grid: Controls & Message Feed */}
         <CollapsibleSection
           title="Bot Control & Live Message Audit Log"
           icon={Sliders}

@@ -29,6 +29,12 @@ const { analyzeAndTagContact } = require('./crmService');
 const BotSettings = require('../models/BotSettings');
 const MessageLog = require('../models/MessageLog');
 const WhitelistContact = require('../models/WhitelistContact');
+const {
+  detectLocationQuery,
+  getCurrentLocation,
+  updateLocationCoordinates,
+  buildLocationTextMessage,
+} = require('./locationService');
 
 // State variables
 let sock = null;
@@ -293,6 +299,12 @@ async function initBaileys(forceRestart = false) {
         const mediaDetails = getMediaDetails(msg.message);
         let messageText = getMessageText(msg.message);
 
+        // Detect if incoming message is a WhatsApp Location Pin
+        const locationMsg = msg.message?.locationMessage || msg.message?.liveLocationMessage;
+        if (locationMsg && locationMsg.degreesLatitude && locationMsg.degreesLongitude) {
+          messageText = `[Shared Location Pin: ${locationMsg.degreesLatitude.toFixed(4)}, ${locationMsg.degreesLongitude.toFixed(4)}]`;
+        }
+
         // If media is present without typed caption, set descriptive placeholder
         if (mediaDetails && (!messageText || messageText.trim() === '')) {
           if (mediaDetails.type === 'document') {
@@ -361,6 +373,30 @@ async function initBaileys(forceRestart = false) {
 
           if (isAutoReplyAll && !matchedContact && !isAllowedByString) {
             console.log(`[Baileys] 🌐 Auto-Reply All is ACTIVE: Processing incoming message from unlisted contact ${senderPhone}.`);
+          }
+
+          // 📍 IF ADMIN / WASIM SENDS A LOCATION PIN VIA WHATSAPP, UPDATE BOT GPS STATE!
+          if (locationMsg && locationMsg.degreesLatitude && locationMsg.degreesLongitude) {
+            const isAdmin =
+              cleanSender === (connectedPhoneNumber ? connectedPhoneNumber.replace(/\D/g, '') : '') ||
+              (allowedList.length > 0 && allowedList.some((al) => cleanSender.includes(al) || al.includes(cleanSender)));
+
+            if (isAdmin) {
+              console.log(`[Baileys] 📍 Admin sent Location Pin via WhatsApp. Updating bot live location...`);
+              const updated = await updateLocationCoordinates({
+                latitude: locationMsg.degreesLatitude,
+                longitude: locationMsg.degreesLongitude,
+                accuracy: locationMsg.accuracyInMeters || 10,
+                name: locationMsg.name || "Wasim Khan's Location",
+                address: locationMsg.address,
+                updatedBy: 'whatsapp_pin',
+              });
+
+              await sock.sendMessage(senderJid, {
+                text: `✅ *Live GPS Location Updated Successfully!*\n\n📍 *Address:* ${updated.address}\n🗺️ *Coordinates:* ${updated.latitude.toFixed(4)}, ${updated.longitude.toFixed(4)}\n\nAb jab bhi koi client ya dost 'kaha ho' puchega, bot ye live location pin share karega.`,
+              });
+              continue;
+            }
           }
 
           // 📊 CHECK PER-CONTACT & GLOBAL MAX MESSAGE LIMIT (AUTO-CAP CONTROLLER)
@@ -454,6 +490,70 @@ async function initBaileys(forceRestart = false) {
               console.error('[Baileys] Error sending game response:', gErr.message);
             }
             continue;
+          }
+
+          // 📍 REAL-TIME GPS & LOCATION INTENT HANDLER ("kaha ho", "where are you", "location bhejo")
+          const isLocationQuery = detectLocationQuery(messageText);
+          if (isLocationQuery) {
+            const locState = await getCurrentLocation();
+            if (locState && locState.isLiveTrackingActive) {
+              const isWhitelisted = Boolean(matchedContact);
+              const allowExact = locState.shareWithAll || isWhitelisted;
+              console.log(`[Baileys] 📍 Location query detected from ${senderPhone} ("${messageText}"). Sharing ${allowExact ? 'exact live GPS pin' : 'general location'}.`);
+
+              try {
+                // Step 1: Human reading simulation
+                await sock.readMessages([msg.key]);
+                await sock.sendPresenceUpdate('composing', senderJid);
+                await new Promise((resolve) => setTimeout(resolve, 1500));
+
+                let sentSummary = '';
+
+                if (allowExact) {
+                  // Send Native WhatsApp Interactive Map Pin
+                  await sock.sendMessage(senderJid, {
+                    location: {
+                      degreesLatitude: locState.latitude,
+                      degreesLongitude: locState.longitude,
+                      name: locState.name || "Wasim Khan's Current Location",
+                      address: locState.address || 'Live Location',
+                    },
+                  });
+
+                  // Send accompanying friendly text message
+                  const replyMsg = buildLocationTextMessage(locState, isWhitelisted);
+                  await new Promise((resolve) => setTimeout(resolve, 800));
+                  await sock.sendMessage(senderJid, { text: replyMsg });
+                  sentSummary = `[Sent Native Map Pin: ${locState.address}]`;
+                } else {
+                  // General privacy-safe response for non-whitelisted contacts
+                  const generalMsg = locState.generalLocationDescription || 'Wasim bhai abhi meeting / office me busy hain. Kuch der me aapse baat karenge.';
+                  await sock.sendMessage(senderJid, { text: generalMsg });
+                  sentSummary = generalMsg;
+                }
+
+                await sock.sendPresenceUpdate('paused', senderJid);
+
+                await MessageLog.create({
+                  sender: senderPhone,
+                  messageIn: messageText,
+                  messageOut: sentSummary,
+                  status: 'LOCATION_SENT',
+                  metaMessageId: msg.key.id || `baileys_${Date.now()}`,
+                });
+
+                await recordMessageExchange(senderPhone, messageText, sentSummary);
+
+                // Increment message counter if limit applies
+                if (matchedContact) {
+                  matchedContact.messagesSentCount = (matchedContact.messagesSentCount || 0) + 1;
+                  await matchedContact.save().catch(() => {});
+                }
+              } catch (locSendErr) {
+                console.error('[Baileys] Error sending location reply:', locSendErr.message);
+              }
+              continue;
+            }
           }
 
           // Process attached media (PDF or Image) with token efficiency optimizations
