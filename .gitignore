@@ -40,3 +40,8 @@ Thumbs.db
 # OCR language models
 *.traineddata
 server/*.traineddata
+
+# Hugging Face generated image artifacts
+server/public/generated_images/*
+!server/public/generated_images/.gitkeep
+

@@ -10,9 +10,31 @@ const whatsappWebRoutes = require('./routes/whatsappWebRoutes');
 const locationRoutes = require('./routes/locationRoutes');
 const { initBaileys } = require('./services/baileysService');
 const { seedDefaultSchedules } = require('./services/scheduleService');
+const { runDailySessionArchiver } = require('./services/chatHistoryService');
+const { handleFatalError } = require('./services/errorRecoveryService');
+const { seedDefaultRoutineTemplates } = require('./services/messageRoutingService');
 
 // Load environment variables
 dotenv.config();
+
+// Global Uncaught Exception & Promise Rejection Supervisors
+process.on('uncaughtException', async (err) => {
+  console.error('🔥 [Process Supervisor] Uncaught Exception intercepted:', err?.message || err);
+  try {
+    await handleFatalError(err, 'UNCAUGHT_EXCEPTION');
+  } catch (supervisorErr) {
+    console.error('Fatal failure inside error supervisor:', supervisorErr.message);
+  }
+});
+
+process.on('unhandledRejection', async (reason) => {
+  console.error('🔥 [Process Supervisor] Unhandled Promise Rejection intercepted:', reason?.message || reason);
+  try {
+    await handleFatalError(reason, 'UNHANDLED_REJECTION');
+  } catch (supervisorErr) {
+    console.error('Fatal failure inside error supervisor:', supervisorErr.message);
+  }
+});
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -20,6 +42,17 @@ const PORT = process.env.PORT || 5000;
 // Connect to MongoDB
 connectDB().then(() => {
   seedDefaultSchedules();
+  seedDefaultRoutineTemplates();
+  runDailySessionArchiver();
+
+  // Periodic daily session archiver ticker (runs every 15 minutes to guarantee timely midnight rollovers)
+  setInterval(async () => {
+    try {
+      await runDailySessionArchiver();
+    } catch (e) {
+      console.warn('[DailySessionManager] Background tick error:', e.message);
+    }
+  }, 15 * 60 * 1000);
 });
 
 // Middleware
@@ -46,6 +79,13 @@ app.use('/webhook', webhookRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/whatsapp-web', whatsappWebRoutes);
 app.use('/api/location', locationRoutes);
+
+// Serve generated AI images statically
+const generatedImagesPath = path.resolve(__dirname, '../public/generated_images');
+if (!fs.existsSync(generatedImagesPath)) {
+  fs.mkdirSync(generatedImagesPath, { recursive: true });
+}
+app.use('/generated-images', express.static(generatedImagesPath));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -92,6 +132,10 @@ app.use((req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled server error:', err.stack);
+
+  // Notify recovery supervisor of server-level unhandled 500 error
+  handleFatalError(err, 'API_FAILURE').catch(() => {});
+
   res.status(500).json({
     error: 'Internal Server Error',
     message: err.message,

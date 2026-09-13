@@ -35,6 +35,15 @@ const {
   updateLocationCoordinates,
   buildLocationTextMessage,
 } = require('./locationService');
+const { classifyMessage } = require('./messageRoutingService');
+const { detectProfanity } = require('./profanityService');
+const { extractImagePrompt, generateHuggingFaceImage } = require('./huggingFaceService');
+const { recordOwnerActivity, checkOwnerInactivityStatus } = require('./inactivityTimerService');
+const {
+  extractNewsQuery,
+  fetchRealTimeNews,
+  formatNewsForWhatsApp,
+} = require('./worldNewsService');
 
 // State variables
 let sock = null;
@@ -280,11 +289,31 @@ async function initBaileys(forceRestart = false) {
       if (type !== 'notify') return;
 
       for (const msg of messages) {
-        // Skip self-messages, status broadcasts, newsletters/channels, and group chats
         const senderJid = msg.key?.remoteJid;
+
+        // 👑 Inactivity Timer: Detect when the owner sends a message
+        if (msg.key?.fromMe) {
+          if (
+            senderJid &&
+            !senderJid.endsWith('@g.us') &&
+            !senderJid.endsWith('@broadcast') &&
+            !senderJid.endsWith('@newsletter') &&
+            senderJid !== 'status@broadcast'
+          ) {
+            try {
+              const targetPhone = await resolveSenderPhoneNumber(senderJid, msg);
+              await recordOwnerActivity(targetPhone);
+              console.log(`[Baileys] 👑 Owner sent a message to ${targetPhone} -> Inactivity timer reset! Auto-replies paused.`);
+            } catch (ownerActErr) {
+              console.warn('[Baileys] Owner activity recording note:', ownerActErr.message);
+            }
+          }
+          continue;
+        }
+
+        // Skip invalid messages, status broadcasts, newsletters/channels, and group chats
         if (
           !msg.message ||
-          msg.key?.fromMe ||
           !senderJid ||
           senderJid === 'status@broadcast' ||
           senderJid.endsWith('@broadcast') ||
@@ -397,6 +426,26 @@ async function initBaileys(forceRestart = false) {
               });
               continue;
             }
+          }
+
+          // 🤫 Check if session is paused due to Owner Inactivity Timer (Owner recently sent a message)
+          const inactivityStatus = await checkOwnerInactivityStatus(senderPhone);
+          if (inactivityStatus.isPaused) {
+            console.log(
+              `[Baileys] 🤫 Automated replies PAUSED for ${senderPhone} due to recent owner activity (${inactivityStatus.remainingMinutes}m remaining). Keeping bot silent.`
+            );
+            try {
+              await MessageLog.create({
+                sender: senderPhone,
+                messageIn: messageText,
+                messageOut: `[Auto-replies paused - Owner active (${inactivityStatus.remainingMinutes}m remaining)]`,
+                status: 'PAUSED_OWNER_ACTIVE',
+                routingCategory: 'OWNER_ACTIVE',
+                routingIntent: 'OWNER_INACTIVITY_PAUSE',
+                metaMessageId: msg.key.id || `baileys_${Date.now()}`,
+              });
+            } catch (pErr) {}
+            continue;
           }
 
           // 📊 CHECK PER-CONTACT & GLOBAL MAX MESSAGE LIMIT (AUTO-CAP CONTROLLER)
@@ -587,7 +636,7 @@ async function initBaileys(forceRestart = false) {
 
           // Build isolated dynamic persona & tone directive tailored for this active contact with real-time style mirroring
           const persona = resolveContactPersona(matchedContact);
-          const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, senderPhone, messageText, processedMedia);
+          const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, senderPhone, messageText, processedMedia, isAutoReplyAll);
           const contactDisplayName = matchedContact?.name || matchedContact?.relationship || senderPhone;
           if (matchedContact?.styleProfile?.hasCustomStyle) {
             console.log(`[Baileys] 🧬 EXCLUSIVE CHAT STYLE ACTIVE for ${contactDisplayName} (${matchedContact.styleProfile.tone || 'Learned'})`);
@@ -643,7 +692,99 @@ async function initBaileys(forceRestart = false) {
             console.warn('[Baileys] Error checking schedule:', scheduleErr.message);
           }
 
-          // Generate Gemini AI response with isolated dynamic persona
+          let routingCategory = matchedSchedule ? 'SCHEDULE' : 'COMPLEX';
+          let routingIntent = matchedSchedule ? 'SCHEDULED_EVENT' : 'AI_COMPLEX';
+
+          // 🛑 1. PROFANITY & ABUSE DETECTION INTERCEPT (Owner-Predefined Reply)
+          const isProfanityFilterActive = settings.profanityFilterEnabled ?? true;
+          if (!replyText && isProfanityFilterActive) {
+            const profanityResult = detectProfanity(messageText, settings.customProfanityKeywords || []);
+            if (profanityResult.hasProfanity) {
+              console.log(`[Baileys] 🛑 ABUSE / PROFANITY DETECTED from ${senderPhone} (Word: "${profanityResult.detectedWord}"). Intercepting and bypassing Gemini AI.`);
+              replyText = settings.profanityReplyMessage ||
+                'Kripya sabhya bhasha ka prayog karein. Hum yahan aadar aur maryada ke saath baat karne ke liye upasthit hain. Please maintain respectful communication.';
+              routingCategory = 'PROFANITY';
+              routingIntent = `BLOCKED_PROFANITY_${profanityResult.detectedWord?.toUpperCase() || 'ABUSE'}`;
+            }
+          }
+
+          // 🎨 2. HUGGING FACE TEXT-TO-IMAGE GENERATION INTERCEPT
+          let generatedImageResult = null;
+          const isImageGenActive = settings.imageGenerationEnabled ?? true;
+          if (!replyText && isImageGenActive) {
+            const imagePromptExtraction = extractImagePrompt(messageText);
+            if (imagePromptExtraction.isImageRequest && imagePromptExtraction.prompt) {
+              console.log(`[Baileys] 🎨 Image generation request identified from ${senderPhone}: "${imagePromptExtraction.prompt}"`);
+              try {
+                // Send "Generating image..." status note to WhatsApp chat
+                const waitNotice = settings.imageGenerationNotice || '🎨 Creating your image with AI, please wait a moment...';
+                await sock.sendMessage(senderJid, { text: waitNotice });
+
+                // Call Hugging Face API
+                generatedImageResult = await generateHuggingFaceImage(
+                  imagePromptExtraction.prompt,
+                  settings.imageGenerationModel || 'black-forest-labs/FLUX.1-schnell'
+                );
+
+                replyText = `🎨 *Generated Image for:* "${imagePromptExtraction.prompt}"\n⚡ *Model:* ${generatedImageResult.model} (${generatedImageResult.durationSeconds}s)`;
+                routingCategory = 'IMAGE_GEN';
+                routingIntent = 'TEXT_TO_IMAGE_FLUX';
+              } catch (imgGenErr) {
+                console.error('[Baileys] Image generation failed:', imgGenErr.message);
+                replyText = `Maaf kijiye, image create karne me dikkat aayi: ${imgGenErr.message}`;
+              }
+            }
+          }
+
+          // 📰 3. REAL-TIME WORLD NEWS INTERCEPT (World News API)
+          const isNewsActive = settings.newsEnabled ?? true;
+          if (!replyText && isNewsActive) {
+            const newsQuery = extractNewsQuery(messageText);
+            if (newsQuery.isNewsRequest) {
+              console.log(`[Baileys] 📰 Real-time news request identified from ${senderPhone}: "${newsQuery.topic || 'Top Headlines'}"`);
+              try {
+                const newsData = await fetchRealTimeNews({
+                  text: newsQuery.topic,
+                  country: settings.newsDefaultCountry || 'in',
+                  language: settings.newsDefaultLanguage || 'en',
+                  number: settings.newsMaxArticles || 3,
+                });
+
+                if (newsData.success && newsData.articles && newsData.articles.length > 0) {
+                  replyText = formatNewsForWhatsApp(
+                    newsData.articles,
+                    newsQuery.topic || 'Top Headlines',
+                    settings.newsDefaultCountry || 'in'
+                  );
+                  routingCategory = 'NEWS';
+                  routingIntent = newsQuery.topic ? `NEWS_SEARCH:${newsQuery.topic.substring(0, 30)}` : 'NEWS_TOP_HEADLINES';
+                }
+              } catch (newsErr) {
+                console.error('[Baileys] Real-time news fetch failed:', newsErr.message);
+              }
+            }
+          }
+
+          // Message Classification & Routing (Routine vs Complex)
+          if (!replyText && !processedMedia) {
+            try {
+              const classification = await classifyMessage(messageText, matchedContact);
+              if (classification.category === 'ROUTINE' && classification.templateReply) {
+                console.log(`[Baileys] ⚡ Routine message identified: [${classification.intentKey}] -> Instant predefined template reply.`);
+                replyText = classification.templateReply;
+                routingCategory = 'ROUTINE';
+                routingIntent = classification.intentKey;
+              } else {
+                console.log(`[Baileys] 🤖 Complex query identified: [${classification.intentKey}] -> Routing to Gemini AI model.`);
+                routingCategory = 'COMPLEX';
+                routingIntent = classification.intentKey;
+              }
+            } catch (routeErr) {
+              console.warn('[Baileys] Routing classification error:', routeErr.message);
+            }
+          }
+
+          // Generate Gemini AI response for complex queries
           let failResult = null;
           if (!replyText) {
             try {
@@ -695,9 +836,17 @@ async function initBaileys(forceRestart = false) {
             // non-fatal
           }
 
-          // STEP 4: Natural Delivery (Dispatch WhatsApp Message)
-          await sock.sendMessage(senderJid, { text: replyText });
-          console.log(`[Anti-Ban Shield] ✅ Message naturally delivered to ${senderPhone}: "${replyText.substring(0, 75)}..."`);
+          // STEP 4: Natural Delivery (Dispatch WhatsApp Message or Image)
+          if (generatedImageResult && generatedImageResult.buffer) {
+            await sock.sendMessage(senderJid, {
+              image: generatedImageResult.buffer,
+              caption: replyText,
+            });
+            console.log(`[Anti-Ban Shield] 🎨 Native AI Image delivered to ${senderPhone}: "${generatedImageResult.prompt}"`);
+          } else {
+            await sock.sendMessage(senderJid, { text: replyText });
+            console.log(`[Anti-Ban Shield] ✅ Message naturally delivered to ${senderPhone}: "${replyText.substring(0, 75)}..."`);
+          }
 
           // Update message count for contact / session & check if limit reached
           let updatedCount = 0;
@@ -760,13 +909,24 @@ async function initBaileys(forceRestart = false) {
 
           // Save to database message logs
           try {
+            const logStatus = generatedImageResult
+              ? 'IMAGE_GENERATED'
+              : routingCategory === 'PROFANITY'
+              ? 'PROFANITY_BLOCKED'
+              : failResult?.triggeredHandover
+              ? 'AGENT_HANDOFF_TRIGGERED'
+              : 'PROCESSED';
+
             await MessageLog.create({
               sender: senderPhone,
               messageIn: processedMedia
                 ? `${messageText} [Media: ${processedMedia.mediaType} - ${processedMedia.tokenOptimizationSummary}]`
                 : messageText,
               messageOut: replyText,
-              status: failResult?.triggeredHandover ? 'AGENT_HANDOFF_TRIGGERED' : 'PROCESSED',
+              status: logStatus,
+              mediaUrl: generatedImageResult?.publicUrl || null,
+              routingCategory,
+              routingIntent,
               metaMessageId: msg.key.id || `baileys_${Date.now()}`,
             });
           } catch (dbErr) {
@@ -830,8 +990,51 @@ async function logout() {
   return { success: true, message: 'Logged out successfully.' };
 }
 
+/**
+ * Sends a direct WhatsApp message to a phone number using the active Baileys socket
+ */
+async function sendBaileysMessage(toPhone, text) {
+  if (!sock || connectionStatus !== 'connected') {
+    throw new Error(`Baileys WhatsApp Web socket is not currently connected (status: ${connectionStatus})`);
+  }
+  const clean = String(toPhone || '').replace(/\D/g, '');
+  if (!clean) {
+    throw new Error('Invalid phone number provided for Baileys delivery');
+  }
+  const jid = `${clean}@s.whatsapp.net`;
+  return await sock.sendMessage(jid, { text: String(text || '') });
+}
+
+/**
+ * Safely restarts the Baileys socket for crash recovery
+ */
+async function restartBaileysSocket() {
+  console.log('[Baileys] 🔄 Initiating automated supervisor restart of Baileys socket...');
+  try {
+    if (sock) {
+      try {
+        sock.end(new Error('Supervisor auto-restart'));
+      } catch (e) {
+        // ignore
+      }
+      sock = null;
+    }
+    connectionStatus = 'disconnected';
+    isInitializing = false;
+    currentQrCode = null;
+    // Re-initialize socket
+    await initBaileys(true);
+    return { success: true, message: 'Baileys socket reinitialized' };
+  } catch (err) {
+    console.error('[Baileys] Error during socket restart:', err.message);
+    throw err;
+  }
+}
+
 module.exports = {
   initBaileys,
   getStatus,
   logout,
+  sendBaileysMessage,
+  restartBaileysSocket,
 };

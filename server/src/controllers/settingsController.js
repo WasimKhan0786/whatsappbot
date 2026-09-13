@@ -2,8 +2,12 @@ const BotSettings = require('../models/BotSettings');
 const MessageLog = require('../models/MessageLog');
 const WhitelistContact = require('../models/WhitelistContact');
 const ChatSession = require('../models/ChatSession');
+const RoutineTemplate = require('../models/RoutineTemplate');
 const { generateGeminiReply } = require('../services/geminiService');
 const { sendWhatsAppMessage } = require('../services/whatsappService');
+const { classifyMessage } = require('../services/messageRoutingService');
+const { detectProfanity } = require('../services/profanityService');
+const { extractImagePrompt, generateHuggingFaceImage } = require('../services/huggingFaceService');
 const { buildDynamicPersonaPrompt } = require('../services/personaService');
 const {
   getGeminiChatHistory,
@@ -17,10 +21,24 @@ const {
   resetFailedAttempts,
   getActiveHandoffs,
   resumeSession,
+  getTodayDateString,
+  runDailySessionArchiver,
 } = require('../services/chatHistoryService');
 const { processGameTurn } = require('../services/gameService');
 const { analyzeAndTagContact } = require('../services/crmService');
+const { getSupervisorStatus, triggerTestAlert } = require('../services/errorRecoveryService');
 const { normalizePhoneNumber } = require('./webhookController');
+const {
+  recordOwnerActivity,
+  checkOwnerInactivityStatus,
+  resumeOwnerInactivity,
+  getActiveInactivitySessions,
+} = require('../services/inactivityTimerService');
+const {
+  extractNewsQuery,
+  fetchRealTimeNews,
+  formatNewsForWhatsApp,
+} = require('../services/worldNewsService');
 
 /**
  * GET /api/settings
@@ -50,6 +68,22 @@ const getSettings = async (req, res) => {
         typingSpeedCPM: settings.typingSpeedCPM ?? 250,
         defaultMaxMessagesPerContact: settings.defaultMaxMessagesPerContact ?? 0,
         limitReachedClosingMessage: settings.limitReachedClosingMessage || '',
+        dailySessionStrategy: settings.dailySessionStrategy || 'RESET',
+        dailyArchiveRetentionDays: settings.dailyArchiveRetentionDays || 3,
+        profanityFilterEnabled: settings.profanityFilterEnabled ?? true,
+        profanityReplyMessage: settings.profanityReplyMessage || 'Kripya sabhya bhasha ka prayog karein. Hum yahan aadar aur maryada ke saath baat karne ke liye upasthit hain. Please maintain respectful communication.',
+        customProfanityKeywords: settings.customProfanityKeywords || [],
+        imageGenerationEnabled: settings.imageGenerationEnabled ?? true,
+        imageGenerationModel: settings.imageGenerationModel || 'black-forest-labs/FLUX.1-schnell',
+        imageGenerationNotice: settings.imageGenerationNotice || '🎨 Creating your image with AI, please wait a moment...',
+        ownerInactivityTimerEnabled: settings.ownerInactivityTimerEnabled ?? true,
+        ownerInactivityDurationMinutes: settings.ownerInactivityDurationMinutes || 15,
+        ownerInactivityScope: settings.ownerInactivityScope || 'PER_CHAT',
+        newsEnabled: settings.newsEnabled ?? true,
+        newsDefaultCountry: settings.newsDefaultCountry || 'in',
+        newsDefaultLanguage: settings.newsDefaultLanguage || 'en',
+        newsMaxArticles: settings.newsMaxArticles || 3,
+        activeSessionDate: getTodayDateString(),
         updatedAt: settings.updatedAt,
       },
       stats: {
@@ -90,6 +124,21 @@ const updateSettings = async (req, res) => {
       typingSpeedCPM,
       defaultMaxMessagesPerContact,
       limitReachedClosingMessage,
+      dailySessionStrategy,
+      dailyArchiveRetentionDays,
+      profanityFilterEnabled,
+      profanityReplyMessage,
+      customProfanityKeywords,
+      imageGenerationEnabled,
+      imageGenerationModel,
+      imageGenerationNotice,
+      ownerInactivityTimerEnabled,
+      ownerInactivityDurationMinutes,
+      ownerInactivityScope,
+      newsEnabled,
+      newsDefaultCountry,
+      newsDefaultLanguage,
+      newsMaxArticles,
     } = req.body;
 
     const settings = await BotSettings.getSettings();
@@ -134,6 +183,66 @@ const updateSettings = async (req, res) => {
       settings.limitReachedClosingMessage = limitReachedClosingMessage.trim();
     }
 
+    if (typeof dailySessionStrategy === 'string' && ['RESET', 'ARCHIVE'].includes(dailySessionStrategy.toUpperCase())) {
+      settings.dailySessionStrategy = dailySessionStrategy.toUpperCase();
+    }
+
+    if (typeof dailyArchiveRetentionDays === 'number') {
+      settings.dailyArchiveRetentionDays = Math.max(1, Math.min(30, dailyArchiveRetentionDays));
+    }
+
+    if (typeof profanityFilterEnabled === 'boolean') {
+      settings.profanityFilterEnabled = profanityFilterEnabled;
+    }
+
+    if (typeof profanityReplyMessage === 'string') {
+      settings.profanityReplyMessage = profanityReplyMessage.trim();
+    }
+
+    if (Array.isArray(customProfanityKeywords)) {
+      settings.customProfanityKeywords = customProfanityKeywords.map(k => String(k).trim()).filter(Boolean);
+    }
+
+    if (typeof imageGenerationEnabled === 'boolean') {
+      settings.imageGenerationEnabled = imageGenerationEnabled;
+    }
+
+    if (typeof imageGenerationModel === 'string' && imageGenerationModel.trim() !== '') {
+      settings.imageGenerationModel = imageGenerationModel.trim();
+    }
+
+    if (typeof imageGenerationNotice === 'string') {
+      settings.imageGenerationNotice = imageGenerationNotice.trim();
+    }
+
+    if (typeof ownerInactivityTimerEnabled === 'boolean') {
+      settings.ownerInactivityTimerEnabled = ownerInactivityTimerEnabled;
+    }
+
+    if (typeof ownerInactivityDurationMinutes === 'number' && ownerInactivityDurationMinutes > 0) {
+      settings.ownerInactivityDurationMinutes = ownerInactivityDurationMinutes;
+    }
+
+    if (typeof ownerInactivityScope === 'string' && ['PER_CHAT', 'GLOBAL'].includes(ownerInactivityScope)) {
+      settings.ownerInactivityScope = ownerInactivityScope;
+    }
+
+    if (typeof newsEnabled === 'boolean') {
+      settings.newsEnabled = newsEnabled;
+    }
+
+    if (typeof newsDefaultCountry === 'string' && newsDefaultCountry.trim() !== '') {
+      settings.newsDefaultCountry = newsDefaultCountry.trim().toLowerCase();
+    }
+
+    if (typeof newsDefaultLanguage === 'string' && newsDefaultLanguage.trim() !== '') {
+      settings.newsDefaultLanguage = newsDefaultLanguage.trim().toLowerCase();
+    }
+
+    if (typeof newsMaxArticles === 'number' && newsMaxArticles > 0) {
+      settings.newsMaxArticles = Math.min(10, Math.max(1, newsMaxArticles));
+    }
+
     settings.updatedAt = new Date();
     await settings.save();
 
@@ -150,6 +259,21 @@ const updateSettings = async (req, res) => {
         typingSpeedCPM: settings.typingSpeedCPM,
         defaultMaxMessagesPerContact: settings.defaultMaxMessagesPerContact,
         limitReachedClosingMessage: settings.limitReachedClosingMessage,
+        dailySessionStrategy: settings.dailySessionStrategy,
+        dailyArchiveRetentionDays: settings.dailyArchiveRetentionDays,
+        profanityFilterEnabled: settings.profanityFilterEnabled,
+        profanityReplyMessage: settings.profanityReplyMessage,
+        customProfanityKeywords: settings.customProfanityKeywords,
+        imageGenerationEnabled: settings.imageGenerationEnabled,
+        imageGenerationModel: settings.imageGenerationModel,
+        imageGenerationNotice: settings.imageGenerationNotice,
+        ownerInactivityTimerEnabled: settings.ownerInactivityTimerEnabled,
+        ownerInactivityDurationMinutes: settings.ownerInactivityDurationMinutes,
+        ownerInactivityScope: settings.ownerInactivityScope,
+        newsEnabled: settings.newsEnabled,
+        newsDefaultCountry: settings.newsDefaultCountry,
+        newsDefaultLanguage: settings.newsDefaultLanguage,
+        newsMaxArticles: settings.newsMaxArticles,
         updatedAt: settings.updatedAt,
       },
     });
@@ -203,7 +327,8 @@ const clearLogs = async (req, res) => {
  */
 const simulateIncoming = async (req, res) => {
   try {
-    const { sender, messageText } = req.body;
+    const sender = req.body.sender;
+    const messageText = req.body.messageText || req.body.message;
 
     if (!sender || !messageText) {
       return res.status(400).json({ error: 'Both sender phone number and messageText are required.' });
@@ -246,9 +371,10 @@ const simulateIncoming = async (req, res) => {
       .map((num) => num.replace(/\D/g, ''))
       .filter((num) => num.length >= 7 && num !== '1234567890');
 
+    const isAutoReplyAll = Boolean(settings.autoReplyAll);
     const isAllowed = matchedContact || allowedList.some((a) => cleanSender === a || cleanSender.endsWith(a) || a.endsWith(cleanSender));
 
-    if (!isAllowed && (allowedList.length > 0 || rawAllowed.trim() !== '')) {
+    if (!isAutoReplyAll && !isAllowed && (allowedList.length > 0 || rawAllowed.trim() !== '')) {
       const log = await MessageLog.create({
         sender,
         messageIn: messageText,
@@ -258,7 +384,27 @@ const simulateIncoming = async (req, res) => {
       return res.json({
         success: false,
         status: 'IGNORED_PHONE_MISMATCH',
-        message: `Phone number ${sender} is not authorized in whitelist.`,
+        message: `Phone number ${sender} is not authorized in whitelist and Auto-Reply All is OFF.`,
+        log,
+      });
+    }
+
+    // 2.39 Check if session is paused due to Owner Inactivity Timer (Owner recently sent a message)
+    const inactivityStatus = await checkOwnerInactivityStatus(sender);
+    if (inactivityStatus.isPaused) {
+      const log = await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: `[Auto-replies paused - Owner active (${inactivityStatus.remainingMinutes}m remaining)]`,
+        status: 'PAUSED_OWNER_ACTIVE',
+        routingCategory: 'OWNER_ACTIVE',
+        routingIntent: 'OWNER_INACTIVITY_PAUSE',
+      });
+      return res.json({
+        success: false,
+        status: 'PAUSED_OWNER_ACTIVE',
+        message: `Automated replies are PAUSED for ${sender} due to recent owner activity (${inactivityStatus.remainingMinutes}m remaining).`,
+        inactivityStatus,
         log,
       });
     }
@@ -348,33 +494,174 @@ const simulateIncoming = async (req, res) => {
       });
     }
 
-    // 3. Dynamic Persona & Isolated Style Prompt Generation with real-time mirroring
+    // 2.8 Message Classification & Routing (Routine vs Complex)
+    let replyText = '';
+    let routingCategory = 'COMPLEX';
+    let routingIntent = 'AI_COMPLEX';
+    let classificationResult = null;
+
+    // 🎨 HUGGING FACE IMAGE GENERATION INTERCEPT
+    const isImageGenActive = settings.imageGenerationEnabled ?? true;
+    if (isImageGenActive) {
+      const imagePromptExtraction = extractImagePrompt(messageText);
+      if (imagePromptExtraction && imagePromptExtraction.isImageRequest && imagePromptExtraction.prompt) {
+        console.log(`🎨 [Simulate] Image request detected! Prompt: "${imagePromptExtraction.prompt}"`);
+        try {
+          const imgResult = await generateHuggingFaceImage(
+            imagePromptExtraction.prompt,
+            settings.imageGenerationModel || 'black-forest-labs/FLUX.1-schnell'
+          );
+          replyText = `🎨 Generated with FLUX.1 AI:\n"${imagePromptExtraction.prompt}"`;
+          routingCategory = 'IMAGE_GEN';
+          routingIntent = 'HUGGINGFACE_TEXT_TO_IMAGE';
+
+          const log = await MessageLog.create({
+            sender,
+            messageIn: messageText,
+            messageOut: replyText,
+            status: 'IMAGE_GENERATED',
+            routingCategory,
+            routingIntent,
+            mediaUrl: imgResult.publicUrl,
+          });
+
+          await recordMessageExchange(sender, messageText, replyText);
+
+          return res.json({
+            success: true,
+            status: 'IMAGE_GENERATED',
+            replyText,
+            mediaUrl: imgResult.publicUrl,
+            prompt: imagePromptExtraction.prompt,
+            model: settings.imageGenerationModel || 'black-forest-labs/FLUX.1-schnell',
+            log,
+          });
+        } catch (imgErr) {
+          console.error('[Simulate] Image generation error:', imgErr.message);
+          replyText = `Maaf kijiye, image generate karne mein dikkat aayi: ${imgErr.message}`;
+        }
+      }
+    }
+
+    // 📰 REAL-TIME WORLD NEWS INTERCEPT (World News API)
+    const isNewsActive = settings.newsEnabled ?? true;
+    if (!replyText && isNewsActive) {
+      const newsQuery = extractNewsQuery(messageText);
+      if (newsQuery.isNewsRequest) {
+        console.log(`📰 [Simulate] Real-time news request detected! Topic: "${newsQuery.topic || 'Top Headlines'}"`);
+        try {
+          const newsData = await fetchRealTimeNews({
+            text: newsQuery.topic,
+            country: settings.newsDefaultCountry || 'in',
+            language: settings.newsDefaultLanguage || 'en',
+            number: settings.newsMaxArticles || 3,
+          });
+
+          if (newsData.success && newsData.articles && newsData.articles.length > 0) {
+            replyText = formatNewsForWhatsApp(
+              newsData.articles,
+              newsQuery.topic || 'Top Headlines',
+              settings.newsDefaultCountry || 'in'
+            );
+            routingCategory = 'NEWS';
+            routingIntent = newsQuery.topic ? `NEWS_SEARCH:${newsQuery.topic.substring(0, 30)}` : 'NEWS_TOP_HEADLINES';
+
+            const log = await MessageLog.create({
+              sender,
+              messageIn: messageText,
+              messageOut: replyText,
+              status: 'PROCESSED',
+              routingCategory,
+              routingIntent,
+            });
+
+            await recordMessageExchange(sender, messageText, replyText);
+
+            return res.json({
+              success: true,
+              status: 'PROCESSED',
+              reply: replyText,
+              replyText,
+              routingCategory,
+              routingIntent,
+              newsArticles: newsData.articles,
+              log,
+            });
+          }
+        } catch (newsErr) {
+          console.error('[Simulate] Real-time news fetch error:', newsErr.message);
+        }
+      }
+    }
+
+    // 🛑 PROFANITY & ABUSE DETECTION INTERCEPT (Owner-Predefined Reply)
+    const isProfanityFilterActive = settings.profanityFilterEnabled ?? true;
+    if (!replyText && isProfanityFilterActive) {
+      const profanityResult = detectProfanity(messageText, settings.customProfanityKeywords || []);
+      if (profanityResult.hasProfanity) {
+        console.log(`🛑 [Simulate] ABUSE / PROFANITY DETECTED (Word: "${profanityResult.detectedWord}"). Intercepting and bypassing Gemini AI.`);
+        replyText = settings.profanityReplyMessage ||
+          'Kripya sabhya bhasha ka prayog karein. Hum yahan aadar aur maryada ke saath baat karne ke liye upasthit hain. Please maintain respectful communication.';
+        routingCategory = 'PROFANITY';
+        routingIntent = `BLOCKED_PROFANITY_${profanityResult.detectedWord?.toUpperCase() || 'ABUSE'}`;
+      }
+    }
+
+    if (!replyText) {
+      try {
+        classificationResult = await classifyMessage(messageText, matchedContact);
+        if (classificationResult.category === 'ROUTINE' && classificationResult.templateReply) {
+          replyText = classificationResult.templateReply;
+          routingCategory = 'ROUTINE';
+          routingIntent = classificationResult.intentKey;
+          console.log(`⚡ [Simulate] Routine message identified: [${classificationResult.intentKey}] -> Predefined template reply.`);
+        } else {
+          routingCategory = 'COMPLEX';
+          routingIntent = classificationResult.intentKey;
+          console.log(`🤖 [Simulate] Complex query identified: [${classificationResult.intentKey}] -> Routing to Gemini AI model.`);
+        }
+      } catch (routeErr) {
+        console.warn('Simulation routing classification warning:', routeErr.message);
+      }
+    }
+
+    // 3. Dynamic Persona & Isolated Style Prompt Generation for complex queries
     let failResult = null;
-    let replyText = "";
-    try {
-      const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, matchedContact, sender, messageText);
-      const chatHistory = await getGeminiChatHistory(sender);
-      replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
-      await resetFailedAttempts(sender);
-    } catch (aiErr) {
-      console.warn('Simulation AI generation error:', aiErr.message);
-      failResult = await recordFailedAttempt(sender);
-      if (failResult.triggeredHandover) {
-        replyText = "I apologize, but I am unable to properly resolve your query. I have notified our live agent team immediately and paused automated replies so a human can step in to assist you.";
-      } else {
-        const log = await MessageLog.create({
+    if (!replyText) {
+      try {
+        const dynamicPrompt = buildDynamicPersonaPrompt(
+          settings.systemPrompt,
+          matchedContact,
           sender,
-          messageIn: messageText,
-          status: 'ERROR',
-          errorMessage: `Gemini failure (attempt ${failResult.unresolvedAttempts}/3): ${aiErr.message}`,
-        });
-        return res.status(500).json({
-          success: false,
-          status: 'ERROR',
-          error: aiErr.message,
-          unresolvedAttempts: failResult.unresolvedAttempts,
-          log,
-        });
+          messageText,
+          null,
+          isAutoReplyAll
+        );
+        const chatHistory = await getGeminiChatHistory(sender);
+        replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
+        await resetFailedAttempts(sender);
+      } catch (aiErr) {
+        console.warn('Simulation AI generation error:', aiErr.message);
+        failResult = await recordFailedAttempt(sender);
+        if (failResult.triggeredHandover) {
+          replyText = "I apologize, but I am unable to properly resolve your query. I have notified our live agent team immediately and paused automated replies so a human can step in to assist you.";
+        } else {
+          const log = await MessageLog.create({
+            sender,
+            messageIn: messageText,
+            status: 'ERROR',
+            routingCategory,
+            routingIntent,
+            errorMessage: `Gemini failure (attempt ${failResult.unresolvedAttempts}/3): ${aiErr.message}`,
+          });
+          return res.status(500).json({
+            success: false,
+            status: 'ERROR',
+            error: aiErr.message,
+            unresolvedAttempts: failResult.unresolvedAttempts,
+            log,
+          });
+        }
       }
     }
 
@@ -419,7 +706,13 @@ const simulateIncoming = async (req, res) => {
       sender,
       messageIn: messageText,
       messageOut: replyText,
-      status: failResult?.triggeredHandover ? 'AGENT_HANDOFF_TRIGGERED' : 'PROCESSED',
+      status: routingCategory === 'PROFANITY'
+        ? 'PROFANITY_BLOCKED'
+        : failResult?.triggeredHandover
+        ? 'AGENT_HANDOFF_TRIGGERED'
+        : 'PROCESSED',
+      routingCategory,
+      routingIntent,
     });
 
     // 6. Record to capped ChatSession history
@@ -439,6 +732,11 @@ const simulateIncoming = async (req, res) => {
     return res.json({
       success: true,
       status: failResult?.triggeredHandover ? 'AGENT_HANDOFF_TRIGGERED' : 'PROCESSED',
+      routing: {
+        category: routingCategory,
+        intent: routingIntent,
+        servedByTemplate: routingCategory === 'ROUTINE',
+      },
       replyText,
       closingMessage: closingMessageSent,
       whatsappResult,
@@ -560,6 +858,254 @@ const resetAllMessageCounters = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/history/daily-rollover
+ * Manually trigger daily session archiving & rollover
+ */
+const triggerDailySessionRollover = async (req, res) => {
+  try {
+    const result = await runDailySessionArchiver();
+    return res.json(result);
+  } catch (error) {
+    console.error('Error in triggerDailySessionRollover:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * GET /api/system/incidents
+ * Retrieve supervisor status and recent incident history
+ */
+const getSystemIncidents = async (req, res) => {
+  try {
+    const status = await getSupervisorStatus();
+    return res.json({ success: true, ...status });
+  } catch (error) {
+    console.error('Error in getSystemIncidents:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * POST /api/system/test-alert
+ * Trigger simulated alert notification via WhatsApp & Email
+ */
+const triggerManualTestAlert = async (req, res) => {
+  try {
+    const customMessage = req.body?.message || 'Manual test alert dispatched from WhatsApp Bot Dashboard';
+    const result = await triggerTestAlert(customMessage);
+    return res.json({ success: true, result });
+  } catch (error) {
+    console.error('Error in triggerManualTestAlert:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * GET /api/routing/templates
+ * Retrieve all predefined routine templates
+ */
+const getRoutingTemplates = async (req, res) => {
+  try {
+    const templates = await RoutineTemplate.find().sort({ createdAt: 1 }).lean();
+    return res.json({ success: true, count: templates.length, templates });
+  } catch (error) {
+    console.error('Error in getRoutingTemplates:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * PUT /api/routing/templates/:id
+ * Update an existing routine template
+ */
+const updateRoutingTemplate = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, defaultTemplate, patterns, isEnabled, personaOverrides } = req.body;
+
+    const template = await RoutineTemplate.findById(id);
+    if (!template) {
+      return res.status(404).json({ success: false, error: 'Routine template not found' });
+    }
+
+    if (typeof name === 'string') template.name = name.trim();
+    if (typeof defaultTemplate === 'string') template.defaultTemplate = defaultTemplate.trim();
+    if (Array.isArray(patterns)) template.patterns = patterns;
+    if (typeof isEnabled === 'boolean') template.isEnabled = isEnabled;
+    if (personaOverrides && typeof personaOverrides === 'object') {
+      template.personaOverrides = { ...template.personaOverrides, ...personaOverrides };
+    }
+
+    await template.save();
+    return res.json({ success: true, message: 'Template updated successfully', template });
+  } catch (error) {
+    console.error('Error in updateRoutingTemplate:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * POST /api/routing/classify
+ * Test-classify any sample message text
+ */
+const testClassifyMessage = async (req, res) => {
+  try {
+    const { text, sender } = req.body;
+    let matchedContact = null;
+    if (sender) {
+      const cleanSender = String(sender).replace(/\D/g, '');
+      const allContacts = await WhitelistContact.find().lean();
+      matchedContact = allContacts.find((c) => {
+        const cClean = c.phoneNumber.replace(/\D/g, '');
+        return cleanSender === cClean || cleanSender.endsWith(cClean) || cClean.endsWith(cleanSender);
+      });
+    }
+
+    const result = await classifyMessage(text || '', matchedContact);
+    return res.json({ success: true, text, result });
+  } catch (error) {
+    console.error('Error in testClassifyMessage:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * POST /api/profanity/test
+ * Test profanity detection for any sample message text
+ */
+const testProfanityCheck = async (req, res) => {
+  try {
+    const { text, customKeywords } = req.body;
+    const settings = await BotSettings.getSettings();
+    const activeCustom = Array.isArray(customKeywords) ? customKeywords : (settings.customProfanityKeywords || []);
+    const detection = detectProfanity(text || '', activeCustom);
+
+    return res.json({
+      success: true,
+      text,
+      isProfanityFilterActive: settings.profanityFilterEnabled ?? true,
+      detection,
+      ownerPredefinedReply: settings.profanityReplyMessage,
+    });
+  } catch (error) {
+    console.error('Error in testProfanityCheck:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * POST /api/image-gen/test
+ * Test Hugging Face Image Generation prompt directly from dashboard sandbox
+ */
+const testImageGeneration = async (req, res) => {
+  try {
+    const { prompt, model } = req.body;
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({ success: false, error: 'Prompt is required' });
+    }
+
+    const settings = await BotSettings.getSettings();
+    const activeModel = model || settings.imageGenerationModel || 'black-forest-labs/FLUX.1-schnell';
+
+    const startTime = Date.now();
+    const result = await generateHuggingFaceImage(prompt.trim(), activeModel);
+    const durationSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    return res.json({
+      success: true,
+      prompt: prompt.trim(),
+      model: activeModel,
+      durationSeconds: parseFloat(durationSeconds),
+      imageUrl: result.publicUrl,
+      fileName: result.filename,
+      sizeBytes: result.buffer ? result.buffer.length : 0,
+    });
+  } catch (error) {
+    console.error('Error in testImageGeneration:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * POST /api/inactivity/simulate-owner-action
+ * Simulates the owner sending a WhatsApp message to reset the inactivity timer and pause replies
+ */
+const simulateOwnerAction = async (req, res) => {
+  try {
+    const { contactPhone, durationMinutes } = req.body;
+    const result = await recordOwnerActivity(contactPhone, durationMinutes);
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error in simulateOwnerAction:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * GET /api/inactivity/active
+ * Returns all chat sessions currently paused due to owner inactivity timer
+ */
+const getActiveInactivityList = async (req, res) => {
+  try {
+    const sessions = await getActiveInactivitySessions();
+    return res.json({ success: true, sessions });
+  } catch (error) {
+    console.error('Error in getActiveInactivityList:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * POST /api/inactivity/resume/:contactPhone?
+ * Manually unpauses and resumes automated replies for a contact or globally
+ */
+const resumeOwnerInactivityHandler = async (req, res) => {
+  try {
+    const contactPhone = req.params.contactPhone || req.body.contactPhone;
+    const result = await resumeOwnerInactivity(contactPhone);
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error in resumeOwnerInactivityHandler:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * POST /api/news/test
+ * Sandbox endpoint to test real-time news search from dashboard
+ */
+const testNewsSearch = async (req, res) => {
+  try {
+    const { query, country, language, number } = req.body;
+    const settings = await BotSettings.getSettings();
+
+    const result = await fetchRealTimeNews({
+      text: query || null,
+      country: country || settings.newsDefaultCountry || 'in',
+      language: language || settings.newsDefaultLanguage || 'en',
+      number: number || settings.newsMaxArticles || 3,
+    });
+
+    const formattedWhatsApp = formatNewsForWhatsApp(
+      result.articles,
+      query || 'Top Headlines',
+      country || settings.newsDefaultCountry || 'in'
+    );
+
+    return res.json({
+      success: result.success,
+      articles: result.articles,
+      totalResults: result.totalResults,
+      formattedWhatsApp,
+      error: result.error,
+    });
+  } catch (err) {
+    console.error('Error in testNewsSearch:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 module.exports = {
   getSettings,
   updateSettings,
@@ -571,4 +1117,18 @@ module.exports = {
   getSessionHistory,
   clearSessionHistory,
   resetAllMessageCounters,
+  triggerDailySessionRollover,
+  getSystemIncidents,
+  triggerManualTestAlert,
+  getRoutingTemplates,
+  updateRoutingTemplate,
+  testClassifyMessage,
+  testProfanityCheck,
+  testImageGeneration,
+  simulateOwnerAction,
+  getActiveInactivityList,
+  resumeOwnerInactivityHandler,
+  testNewsSearch,
 };
+
+

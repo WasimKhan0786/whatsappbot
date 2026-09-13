@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { reconcileIndexes } = require('../config/db');
 
 const envPath = path.resolve(__dirname, '../../.env');
 
@@ -113,6 +114,33 @@ async function probeGeminiApiKey(apiKey) {
 }
 
 /**
+ * Live test probe to verify if a World News API key is valid
+ */
+async function probeWorldNewsApiKey(apiKey) {
+  if (!apiKey || apiKey.trim() === '') {
+    return { isValid: false, message: 'World News API key is empty.' };
+  }
+
+  try {
+    const axios = require('axios');
+    const res = await axios.get('https://api.worldnewsapi.com/search-news', {
+      params: { text: 'test', number: 1 },
+      headers: { 'x-api-key': apiKey.trim() },
+      timeout: 8000,
+    });
+    return {
+      isValid: res.status === 200,
+      message: `World News API key verified live! Found ${res.data?.available || 0} news sources.`,
+    };
+  } catch (err) {
+    return {
+      isValid: false,
+      message: `World News API probe failed: ${err.response?.data?.message || err.message}`,
+    };
+  }
+}
+
+/**
  * GET /api/env
  * Return masked status of the environment configuration
  */
@@ -121,17 +149,31 @@ const getEnvConfig = async (req, res) => {
     const currentGeminiKey = process.env.GEMINI_API_KEY || '';
     const hasKey = Boolean(currentGeminiKey && currentGeminiKey !== 'YOUR_GEMINI_API_KEY' && currentGeminiKey.trim() !== '');
 
+    const currentNewsKey = process.env.WORLD_NEWS_API_KEY || '';
+    const hasNewsKey = Boolean(currentNewsKey && currentNewsKey.trim() !== '');
+
+    const currentHfKey = process.env.HUGGINGFACE_API_KEY || '';
+    const hasHfKey = Boolean(currentHfKey && currentHfKey.trim() !== '');
+
     res.json({
       success: true,
       data: {
         hasGeminiKey: hasKey,
         maskedGeminiKey: maskApiKey(currentGeminiKey),
+        hasWorldNewsKey: hasNewsKey,
+        maskedWorldNewsKey: maskApiKey(currentNewsKey),
+        hasHuggingFaceKey: hasHfKey,
+        maskedHuggingFaceKey: maskApiKey(currentHfKey),
         allowedPhoneNumber: process.env.ALLOWED_PHONE_NUMBER || '',
         chatHistoryMaxMessages: parseInt(process.env.CHAT_HISTORY_MAX_MESSAGES, 10) || 20,
         chatSessionTtlDays: parseInt(process.env.CHAT_SESSION_TTL_DAYS, 10) || 7,
         messageLogTtlDays: parseInt(process.env.MESSAGE_LOG_TTL_DAYS, 10) || 30,
         port: process.env.PORT || 5000,
         hasWhatsAppToken: Boolean(process.env.WHATSAPP_TOKEN && !process.env.WHATSAPP_TOKEN.startsWith('mock_')),
+        hasTwilioConfig: Boolean(process.env.TWILIO_ACCOUNT_SID),
+        twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || '',
+        hasTwilioAuthToken: Boolean(process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_AUTH_TOKEN.trim() !== ''),
+        twilioWhatsAppNumber: process.env.TWILIO_WHATSAPP_NUMBER || '',
       },
     });
   } catch (err) {
@@ -197,10 +239,21 @@ const updateEnvConfig = async (req, res) => {
 
     console.log(`[EnvController] 🔄 Environment dynamically updated (${Object.keys(updatesToApply).join(', ')}). No reboot needed.`);
 
-    // 6. Test probe if GEMINI_API_KEY was updated
+    // 6. Reconcile MongoDB Atlas TTL indexes if TTL timeframes were updated
+    if (updatesToApply.CHAT_SESSION_TTL_DAYS || updatesToApply.MESSAGE_LOG_TTL_DAYS) {
+      await reconcileIndexes().catch((idxErr) => console.warn('TTL index update note:', idxErr.message));
+    }
+
+    // 7. Test probe if GEMINI_API_KEY was updated
     let geminiProbeResult = null;
     if (updatesToApply.GEMINI_API_KEY) {
       geminiProbeResult = await probeGeminiApiKey(updatesToApply.GEMINI_API_KEY);
+    }
+
+    // 8. Test probe if WORLD_NEWS_API_KEY was updated
+    let worldNewsProbeResult = null;
+    if (updatesToApply.WORLD_NEWS_API_KEY) {
+      worldNewsProbeResult = await probeWorldNewsApiKey(updatesToApply.WORLD_NEWS_API_KEY);
     }
 
     return res.json({
@@ -209,6 +262,8 @@ const updateEnvConfig = async (req, res) => {
       updatedKeys: Object.keys(updatesToApply),
       maskedGeminiKey: maskApiKey(process.env.GEMINI_API_KEY),
       geminiProbe: geminiProbeResult,
+      maskedWorldNewsKey: maskApiKey(process.env.WORLD_NEWS_API_KEY),
+      worldNewsProbe: worldNewsProbeResult,
     });
   } catch (err) {
     console.error('Error updating environment configuration:', err);
@@ -223,5 +278,6 @@ module.exports = {
   getEnvConfig,
   updateEnvConfig,
   probeGeminiApiKey,
+  probeWorldNewsApiKey,
   maskApiKey,
 };

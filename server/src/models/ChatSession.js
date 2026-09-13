@@ -37,6 +37,19 @@ const chatSessionSchema = new mongoose.Schema({
     type: [chatMessageSchema],
     default: [],
   },
+  currentSessionDate: {
+    type: String,
+    index: true,
+    default: () => new Date().toISOString().slice(0, 10),
+  },
+  archivedDailyContexts: [
+    {
+      date: { type: String, required: true },
+      messageCount: { type: Number, default: 0 },
+      messages: { type: [chatMessageSchema], default: [] },
+      archivedAt: { type: Date, default: Date.now },
+    },
+  ],
   isHandedOff: {
     type: Boolean,
     default: false,
@@ -67,6 +80,20 @@ const chatSessionSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+  ownerLastActivityAt: {
+    type: Date,
+    default: null,
+  },
+  isOwnerActivePaused: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  ownerPausedUntil: {
+    type: Date,
+    default: null,
+    index: true,
+  },
   gameState: {
     active: {
       type: Boolean,
@@ -93,16 +120,22 @@ const chatSessionSchema = new mongoose.Schema({
       default: null,
     },
   },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
   updatedAt: {
     type: Date,
     default: Date.now,
   },
 });
 
-// TTL index to automatically purge inactive chat sessions after a configurable duration (default: 7 days)
+// TTL (Time-To-Live) index on MongoDB Atlas:
+// Automatically purges inactive chat session documents after a configurable duration (default: 7 days)
+// to strictly guarantee database storage stays within MongoDB Atlas free-tier (M0 512MB) limits.
 const sessionTtlDays = parseInt(process.env.CHAT_SESSION_TTL_DAYS, 10);
 const sessionTtlSeconds = (!isNaN(sessionTtlDays) && sessionTtlDays > 0 ? sessionTtlDays : 7) * 24 * 60 * 60;
 
-chatSessionSchema.index({ updatedAt: 1 }, { expireAfterSeconds: sessionTtlSeconds });
+chatSessionSchema.index({ updatedAt: 1 }, { expireAfterSeconds: sessionTtlSeconds, background: true });
 
 module.exports = mongoose.model('ChatSession', chatSessionSchema);

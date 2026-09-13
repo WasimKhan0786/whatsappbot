@@ -11,6 +11,18 @@ const {
   getSessionHistory,
   clearSessionHistory,
   resetAllMessageCounters,
+  triggerDailySessionRollover,
+  getSystemIncidents,
+  triggerManualTestAlert,
+  getRoutingTemplates,
+  updateRoutingTemplate,
+  testClassifyMessage,
+  testProfanityCheck,
+  testImageGeneration,
+  simulateOwnerAction,
+  getActiveInactivityList,
+  resumeOwnerInactivityHandler,
+  testNewsSearch,
 } = require('../controllers/settingsController');
 
 const {
@@ -56,6 +68,7 @@ router.delete('/logs', clearLogs);
 // Chat history session management
 router.get('/history/:sessionId', getSessionHistory);
 router.delete('/history/:sessionId', clearSessionHistory);
+router.post('/history/daily-rollover', triggerDailySessionRollover);
 
 // Live Agent Handoff & Paused Sessions Management
 router.get('/handoffs', getHandoffList);
@@ -78,5 +91,28 @@ router.get('/schedules/check', checkActiveScheduleEndpoint);
 
 // Testing & Simulation
 router.post('/simulate', simulateIncoming);
+
+// Automated Error Supervisor & Alert Notification System
+router.get('/system/incidents', getSystemIncidents);
+router.post('/system/test-alert', triggerManualTestAlert);
+
+// Message Classification & Routing (Routine Templates vs Complex AI)
+router.get('/routing/templates', getRoutingTemplates);
+router.put('/routing/templates/:id', updateRoutingTemplate);
+router.post('/routing/classify', testClassifyMessage);
+
+// Profanity & Abusive Language Protection
+router.post('/profanity/test', testProfanityCheck);
+
+// Hugging Face AI Image Generation Sandbox
+router.post('/image-gen/test', testImageGeneration);
+
+// Owner Inactivity Timer & Smart Pause System
+router.post('/inactivity/simulate-owner-action', simulateOwnerAction);
+router.get('/inactivity/active', getActiveInactivityList);
+router.post('/inactivity/resume/:contactPhone?', resumeOwnerInactivityHandler);
+
+// Real-Time World News Integration (World News API)
+router.post('/news/test', testNewsSearch);
 
 module.exports = router;

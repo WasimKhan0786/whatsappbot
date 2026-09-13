@@ -61,6 +61,60 @@ async function sendWhatsAppMessage(to, messageText) {
   }
 }
 
+/**
+ * Send WhatsApp Image via Meta WhatsApp Cloud API
+ * @param {string} to - Recipient phone number
+ * @param {string} imageUrl - Public HTTP URL of the image
+ * @param {string} [caption] - Optional image caption
+ */
+async function sendWhatsAppImage(to, imageUrl, caption = '') {
+  const token = process.env.WHATSAPP_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const cleanRecipient = to.replace(/\D/g, '');
+
+  const isMockToken = !token || token.includes('your_meta') || token.startsWith('mock_');
+  const isMockPhoneId = !phoneNumberId || phoneNumberId === '100000000000000' || phoneNumberId === '123456789012345';
+
+  if (isMockToken || isMockPhoneId) {
+    console.log(`[WhatsApp Mock Mode] Outgoing image to ${cleanRecipient}: URL="${imageUrl}", Caption="${caption}"`);
+    return {
+      success: true,
+      isMock: true,
+      message: 'WhatsApp image simulated successfully (Meta Cloud API credentials mock).',
+      recipient: cleanRecipient,
+      imageUrl,
+    };
+  }
+
+  const url = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+  const payload = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: cleanRecipient,
+    type: 'image',
+    image: {
+      link: imageUrl,
+      caption: caption || undefined,
+    },
+  };
+
+  try {
+    const response = await axios.post(url, payload, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    });
+    return { success: true, isMock: false, data: response.data };
+  } catch (error) {
+    const errorDetail = error.response ? JSON.stringify(error.response.data) : error.message;
+    console.error(`Failed to send WhatsApp image to ${cleanRecipient}:`, errorDetail);
+    throw new Error(`WhatsApp Cloud API Image error: ${errorDetail}`);
+  }
+}
+
 module.exports = {
   sendWhatsAppMessage,
+  sendWhatsAppImage,
 };

@@ -25,6 +25,11 @@ const messageLogSchema = new mongoose.Schema({
       'SIMULATED',
       'AGENT_HANDOFF_TRIGGERED',
       'PAUSED_FOR_AGENT',
+      'PROFANITY_BLOCKED',
+      'IMAGE_GENERATED',
+      'PAUSED_OWNER_ACTIVE',
+      'CAP_REACHED',
+      'NEWS_FETCHED',
     ],
     default: 'PROCESSED',
     index: true,
@@ -36,6 +41,20 @@ const messageLogSchema = new mongoose.Schema({
   metaMessageId: {
     type: String,
     default: null,
+  },
+  mediaUrl: {
+    type: String,
+    default: null,
+  },
+  routingCategory: {
+    type: String,
+    enum: ['ROUTINE', 'COMPLEX', 'SCHEDULE', 'GAME', 'HANDOFF', 'SIMULATED', 'PROFANITY', 'IMAGE_GEN', 'OWNER_ACTIVE', 'NEWS', 'UNKNOWN'],
+    default: 'COMPLEX',
+    index: true,
+  },
+  routingIntent: {
+    type: String,
+    default: '',
   },
   createdAt: {
     type: Date,

@@ -1,4 +1,20 @@
 const ChatSession = require('../models/ChatSession');
+const BotSettings = require('../models/BotSettings');
+
+/**
+ * Retrieves daily session management settings (strategy: RESET vs ARCHIVE, retention days)
+ */
+async function getDailySessionConfig() {
+  try {
+    const settings = await BotSettings.findOne({ key: 'global_settings' }).select('dailySessionStrategy dailyArchiveRetentionDays').lean();
+    return {
+      strategy: settings?.dailySessionStrategy || 'RESET',
+      retentionDays: settings?.dailyArchiveRetentionDays || 3,
+    };
+  } catch (e) {
+    return { strategy: 'RESET', retentionDays: 3 };
+  }
+}
 
 /**
  * Default maximum number of recent messages preserved per chat session.
@@ -72,7 +88,51 @@ function sanitizeHistoryForGemini(rawMessages) {
 }
 
 /**
+ * Returns today's date string in YYYY-MM-DD format for target timezone (default Asia/Kolkata)
+ */
+function getTodayDateString(date = new Date()) {
+  const timeZone = process.env.TIMEZONE || 'Asia/Kolkata';
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(date);
+}
+
+/**
+ * Returns Date object for start of current day (00:00:00.000) in target timezone
+ */
+function getStartOfToday(date = new Date()) {
+  const timeZone = process.env.TIMEZONE || 'Asia/Kolkata';
+  const d = new Date(date);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hour12: false,
+  }).formatToParts(d);
+
+  const partMap = {};
+  for (const p of parts) partMap[p.type] = p.value;
+
+  const localMidnightMs =
+    (parseInt(partMap.hour || '0', 10) * 3600 +
+      parseInt(partMap.minute || '0', 10) * 60 +
+      parseInt(partMap.second || '0', 10)) * 1000 +
+    d.getMilliseconds();
+
+  return new Date(d.getTime() - localMidnightMs);
+}
+
+/**
  * Retrieve sanitized recent chat history for a session formatted for Gemini API.
+ * Strictly filters to ONLY include messages from the current active day.
  *
  * @param {string} sessionId - Phone number or unique session identifier
  * @param {number} [limit] - Max number of messages to fetch (default: CHAT_HISTORY_MAX_MESSAGES or 20)
@@ -91,8 +151,19 @@ async function getGeminiChatHistory(sessionId, limit = DEFAULT_MAX_MESSAGES) {
       return [];
     }
 
-    // Take only the last 'limit' messages
-    const recentMessages = session.messages.slice(-limit);
+    // Daily Session Filter: strictly only analyze today's active conversation
+    const startOfToday = getStartOfToday();
+    const todayMessages = session.messages.filter((msg) => {
+      const msgTime = msg.timestamp ? new Date(msg.timestamp) : null;
+      return msgTime && msgTime >= startOfToday;
+    });
+
+    if (todayMessages.length === 0) {
+      return [];
+    }
+
+    // Take only the last 'limit' messages from today's active turns
+    const recentMessages = todayMessages.slice(-limit);
     return sanitizeHistoryForGemini(recentMessages);
   } catch (err) {
     console.warn(`[ChatHistoryService] Error retrieving history for ${sessionId}:`, err.message);
@@ -124,43 +195,161 @@ async function recordMessageExchange(sessionId, userMessage, botReply, maxLimit 
       return null;
     }
 
+    const todayDateStr = getTodayDateString();
+    const startOfToday = getStartOfToday();
+    const now = new Date();
+
     const turnsToAdd = [];
     if (userText) {
       turnsToAdd.push({
         role: 'user',
         parts: [{ text: userText }],
-        timestamp: new Date(),
+        timestamp: now,
       });
     }
     if (botText) {
       turnsToAdd.push({
         role: 'model',
         parts: [{ text: botText }],
-        timestamp: new Date(),
+        timestamp: now,
       });
     }
 
     const maxMessages = !isNaN(maxLimit) && maxLimit > 0 ? maxLimit : DEFAULT_MAX_MESSAGES;
 
-    // MongoDB atomic update with $push and negative $slice to keep only the most recent N items
-    const updated = await ChatSession.findOneAndUpdate(
-      { sessionId: cleanSessionId },
-      {
-        $push: {
-          messages: {
-            $each: turnsToAdd,
-            $slice: -maxMessages,
-          },
-        },
-        $set: { updatedAt: new Date() },
-      },
-      { upsert: true, new: true }
-    );
+    // Retrieve or initialize session
+    let session = await ChatSession.findOne({ sessionId: cleanSessionId });
 
-    return updated;
+    if (!session) {
+      session = new ChatSession({
+        sessionId: cleanSessionId,
+        currentSessionDate: todayDateStr,
+        messages: turnsToAdd,
+        updatedAt: now,
+      });
+      await session.save();
+      return session;
+    }
+
+    // Check if session contains messages from a prior day or currentSessionDate has changed
+    const isPriorDay = session.currentSessionDate && session.currentSessionDate !== todayDateStr;
+    const hasPriorDayMessages = session.messages && session.messages.some((m) => m.timestamp && new Date(m.timestamp) < startOfToday);
+
+    if (isPriorDay || hasPriorDayMessages) {
+      const priorDayMsgs = session.messages.filter((m) => !m.timestamp || new Date(m.timestamp) < startOfToday);
+      const todayMsgs = session.messages.filter((m) => m.timestamp && new Date(m.timestamp) >= startOfToday);
+      const config = await getDailySessionConfig();
+
+      if (config.strategy === 'ARCHIVE' && priorDayMsgs.length > 0) {
+        const archiveEntry = {
+          date: session.currentSessionDate || 'prior_day',
+          messageCount: priorDayMsgs.length,
+          messages: priorDayMsgs,
+          archivedAt: now,
+        };
+
+        if (!session.archivedDailyContexts) session.archivedDailyContexts = [];
+        session.archivedDailyContexts.push(archiveEntry);
+
+        // Strictly cap archived daily contexts to prevent MongoDB Atlas free-tier accumulation
+        if (session.archivedDailyContexts.length > config.retentionDays) {
+          session.archivedDailyContexts = session.archivedDailyContexts.slice(-config.retentionDays);
+        }
+        console.log(`🌅 [DailySessionManager] Archived ${priorDayMsgs.length} prior day turns for ${cleanSessionId} (Retained max ${config.retentionDays} days).`);
+      } else {
+        // RESET mode: Purge old context to ensure zero data accumulation and maximum free-tier efficiency
+        if (session.archivedDailyContexts && session.archivedDailyContexts.length > 0) {
+          session.archivedDailyContexts = [];
+        }
+        console.log(`🧹 [DailySessionManager] Daily reset: purged prior day context for ${cleanSessionId} (Free-tier zero accumulation mode).`);
+      }
+
+      // Reset active conversation array to only today's turns
+      session.messages = todayMsgs.concat(turnsToAdd);
+      session.currentSessionDate = todayDateStr;
+      session.unresolvedAttempts = 0; // Reset unresolved attempts for the new day
+    } else {
+      // Add turns to today's active conversation
+      session.messages = (session.messages || []).concat(turnsToAdd);
+      session.currentSessionDate = todayDateStr;
+    }
+
+    // Keep active list bounded by maxMessages
+    if (session.messages.length > maxMessages) {
+      session.messages = session.messages.slice(-maxMessages);
+    }
+
+    session.updatedAt = now;
+    await session.save();
+    return session;
   } catch (err) {
     console.error(`[ChatHistoryService] Error recording exchange for ${sessionId}:`, err.message);
     return null;
+  }
+}
+
+/**
+ * Daily midnight rollover & context archiver/resetter
+ * Scans all sessions and clears/archives previous days' conversation context,
+ * maintaining database efficiency within MongoDB Atlas free tier limits.
+ *
+ * @returns {Promise<{ success: boolean, processedCount: number, mode: string, activeDate: string }>}
+ */
+async function runDailySessionArchiver() {
+  const todayDateStr = getTodayDateString();
+  const startOfToday = getStartOfToday();
+  const now = new Date();
+  const config = await getDailySessionConfig();
+
+  console.log(`🌅 [DailySessionManager] Running daily session rollover (Strategy: ${config.strategy}, Active date: ${todayDateStr})...`);
+
+  try {
+    const sessions = await ChatSession.find({
+      $or: [
+        { currentSessionDate: { $ne: todayDateStr }, 'messages.0': { $exists: true } },
+        { 'messages.timestamp': { $lt: startOfToday } },
+      ],
+    });
+
+    let processedCount = 0;
+
+    for (const session of sessions) {
+      const priorDayMsgs = (session.messages || []).filter((m) => !m.timestamp || new Date(m.timestamp) < startOfToday);
+      const todayMsgs = (session.messages || []).filter((m) => m.timestamp && new Date(m.timestamp) >= startOfToday);
+
+      if (priorDayMsgs.length > 0 || session.currentSessionDate !== todayDateStr) {
+        if (config.strategy === 'ARCHIVE' && priorDayMsgs.length > 0) {
+          const archiveEntry = {
+            date: session.currentSessionDate || 'prior_day',
+            messageCount: priorDayMsgs.length,
+            messages: priorDayMsgs,
+            archivedAt: now,
+          };
+
+          if (!session.archivedDailyContexts) session.archivedDailyContexts = [];
+          session.archivedDailyContexts.push(archiveEntry);
+          if (session.archivedDailyContexts.length > config.retentionDays) {
+            session.archivedDailyContexts = session.archivedDailyContexts.slice(-config.retentionDays);
+          }
+        } else {
+          // RESET mode: empty archived contexts to maintain minimal storage footprint
+          session.archivedDailyContexts = [];
+        }
+
+        session.messages = todayMsgs;
+        session.currentSessionDate = todayDateStr;
+        session.unresolvedAttempts = 0;
+        session.updatedAt = now;
+        await session.save();
+        processedCount++;
+      }
+    }
+
+    console.log(`🌅 [DailySessionManager] Daily rollover finished: ${processedCount} sessions updated via ${config.strategy} mode, active context fresh for ${todayDateStr}.`);
+    return { success: true, processedCount, mode: config.strategy, activeDate: todayDateStr };
+  } catch (err) {
+    console.error('[DailySessionManager] Error running daily session archiver:', err.message);
+    return { success: false, error: err.message };
   }
 }
 
@@ -444,6 +633,9 @@ module.exports = {
   getActiveHandoffs,
   getSessionMessageCount,
   incrementSessionMessageCount,
+  getTodayDateString,
+  getStartOfToday,
+  runDailySessionArchiver,
 };
 
 

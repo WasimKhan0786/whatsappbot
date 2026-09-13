@@ -427,12 +427,25 @@ function analyzeIncomingMessageStyle(text) {
  * @param {object} contact - WhitelistContact document
  * @param {string} senderPhone - Sender phone number
  * @param {string} [incomingMessage] - Real-time incoming WhatsApp message text
+ * @param {object|null} [mediaInfo=null] - Media file info
+ * @param {boolean} [isAutoReplyAll=false] - Whether global Auto-Reply All is enabled
  * @returns {string} - Tailored dynamic system prompt
  */
-function buildDynamicPersonaPrompt(baseSystemPrompt, contact, senderPhone, incomingMessage = '', mediaInfo = null) {
-  const persona = resolveContactPersona(contact);
+function buildDynamicPersonaPrompt(baseSystemPrompt, contact, senderPhone, incomingMessage = '', mediaInfo = null, isAutoReplyAll = false) {
+  let cleanedBasePrompt = baseSystemPrompt || '';
+  if (isAutoReplyAll) {
+    // Strip security whitelist filter instruction so AI happily responds to all incoming messages
+    cleanedBasePrompt = cleanedBasePrompt
+      .replace(/Security Rule:\s*Only respond to messages originating from numbers listed in the whitelist filter[^\n]*\n*/gi, '')
+      .replace(/For any message from an unlisted number,?\s*silently ignore it and do not dispatch any replies\.\n*/gi, '')
+      .replace(/Only respond to messages originating from numbers listed in the whitelist filter\.\s*For any message from an unlisted number,?\s*silently ignore it and do not dispatch any replies\.\n*/gi, '');
+  }
+
+  const persona = (isAutoReplyAll && !contact)
+    ? PERSONA_CONFIGS.RESPECTFUL
+    : resolveContactPersona(contact);
   const contactName = contact?.name ? `"${contact.name}"` : (contact?.relationship ? `"${contact.relationship}"` : 'this contact');
-  const relationship = contact?.relationship || 'Friend';
+  const relationship = contact?.relationship || (isAutoReplyAll ? 'Community Contact' : 'Friend');
   const customInstructions = contact?.customToneInstructions?.trim() || '';
 
   // Analyze incoming message style for real-time mirroring
@@ -568,7 +581,52 @@ CORE MIRRORING MANDATE:
 ======================================================
 `;
 
-  return `${baseSystemPrompt || ''}\n\n${personaDirective}\n\n${adaptiveMirroringDirective}${shayariDirective ? `\n\n${shayariDirective}` : ''}${mediaDirective ? `\n\n${mediaDirective}` : ''}`;
+  // Global Auto-Reply All: Respectful, Polite & Peaceful Tone Mandate
+  let autoReplyAllDirective = '';
+  if (isAutoReplyAll) {
+    autoReplyAllDirective = `
+======================================================
+[GLOBAL AUTO-REPLY ALL: MANDATORY RESPECTFUL, POLITE & PEACEFUL TONE DIRECTIVE]
+Global Auto-Reply All is currently ENABLED. You are responding on behalf of the user to every incoming WhatsApp message.
+MANDATORY UNIVERSAL BEHAVIORAL DIRECTIVES:
+1. RESPECTFUL & COURTEOUS CONDUCT:
+   - Maintain an exceptionally respectful, polite, calm, and courteous tone for every conversation without exception.
+   - Treat every sender with warmth, dignity, and gracious hospitality. Use polite honorifics and respectful pronouns (such as "Aap", "Ji", or courteous, professional English/Hinglish phrasing).
+2. PEACEFUL & HARMONIOUS INTERACTIONS:
+   - Ensure every reply promotes peace, kindness, positivity, and mutual understanding.
+   - Under no circumstances use rude, dismissive, arrogant, sarcastic, offensive, or argumentative language.
+   - If an incoming message is hostile, impatient, provocative, or upset, respond with serene composure, gentle empathy, and tranquil politeness to de-escalate peacefully.
+3. CONSTRUCTIVE & HELPFUL REPLIES:
+   - Provide clear, well-mannered, and helpful assistance while maintaining natural human warmth and peaceful dignity.
+======================================================
+`;
+  }
+
+  // Daily Session Context Prioritization & Independent Message Analysis Directive
+  const dailyContextDirective = `
+======================================================
+[DAILY SESSION CONTEXT PRIORITIZATION & INDEPENDENT ANALYSIS MANDATE]
+1. PRIORITIZE CURRENT DAY'S CHAT CONTEXT:
+   - When generating your reply, prioritize the chat context from the current day's active session.
+   - Reference previous turns from today whenever relevant to maintain natural conversational continuity, answer follow-up questions, and understand ongoing topics.
+2. INDEPENDENT MESSAGE ANALYSIS AS FALLBACK:
+   - If no relevant information is found in the daily session to address an incoming message (or if the sender begins a completely new, unrelated topic), analyze the incoming message independently on its own merits.
+   - Generate a thoughtful, context-aware, and appropriate reply without forcing unnatural connections to earlier context.
+======================================================
+`;
+
+  return [
+    cleanedBasePrompt,
+    dailyContextDirective,
+    autoReplyAllDirective,
+    personaDirective,
+    adaptiveMirroringDirective,
+    shayariDirective,
+    mediaDirective,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
 }
 
 module.exports = {

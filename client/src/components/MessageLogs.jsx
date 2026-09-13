@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Clock, MessageSquare, Trash2, User, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Clock, MessageSquare, Trash2, User, Sparkles, ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Timer, Newspaper } from 'lucide-react';
 
 export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
   const [activeTab, setActiveTab] = useState('ALL');
@@ -8,6 +8,7 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
 
   const filteredLogs = logs.filter((log) => {
     if (activeTab === 'ALL') return true;
+    if (activeTab === 'NEWS') return log.routingCategory === 'NEWS' || log.status === 'NEWS_FETCHED';
     return log.status === activeTab;
   });
 
@@ -17,12 +18,84 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
     switch (status) {
       case 'PROCESSED':
         return <span className="badge-status processed">Processed & Replied</span>;
+      case 'NEWS_FETCHED':
+        return (
+          <span
+            className="badge-status"
+            style={{
+              background: 'rgba(6, 182, 212, 0.2)',
+              color: '#67e8f9',
+              borderColor: 'rgba(6, 182, 212, 0.4)',
+              border: '1px solid',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <Newspaper size={11} />
+            News Delivered
+          </span>
+        );
+      case 'IMAGE_GENERATED':
+        return (
+          <span
+            className="badge-status"
+            style={{
+              background: 'rgba(236, 72, 153, 0.2)',
+              color: '#f472b6',
+              borderColor: 'rgba(236, 72, 153, 0.4)',
+              border: '1px solid',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <ImageIcon size={11} />
+            Image Generated
+          </span>
+        );
+      case 'PAUSED_OWNER_ACTIVE':
+        return (
+          <span
+            className="badge-status"
+            style={{
+              background: 'rgba(245, 158, 11, 0.2)',
+              color: '#fbbf24',
+              borderColor: 'rgba(245, 158, 11, 0.4)',
+              border: '1px solid',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <Timer size={11} />
+            Owner Active (Silenced)
+          </span>
+        );
       case 'IGNORED_PHONE_MISMATCH':
         return <span className="badge-status ignored_phone_mismatch">Filtered: Mismatch</span>;
       case 'BOT_DISABLED':
         return <span className="badge-status bot_disabled">Bot Disabled</span>;
       case 'ERROR':
         return <span className="badge-status error">Error Occurred</span>;
+      case 'PROFANITY_BLOCKED':
+        return (
+          <span
+            className="badge-status"
+            style={{
+              background: 'rgba(239, 68, 68, 0.2)',
+              color: '#f87171',
+              borderColor: 'rgba(239, 68, 68, 0.4)',
+              border: '1px solid',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <ShieldAlert size={11} />
+            Abuse Blocked
+          </span>
+        );
       default:
         return <span className="badge-status">{status}</span>;
     }
@@ -57,7 +130,7 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
 
       {/* Filter Tabs */}
       <div className="filter-tabs">
-        {['ALL', 'PROCESSED', 'IGNORED_PHONE_MISMATCH', 'BOT_DISABLED', 'ERROR'].map((tab) => (
+        {['ALL', 'PROCESSED', 'IMAGE_GENERATED', 'NEWS', 'PROFANITY_BLOCKED', 'PAUSED_OWNER_ACTIVE', 'IGNORED_PHONE_MISMATCH', 'BOT_DISABLED', 'ERROR'].map((tab) => (
           <button
             key={tab}
             id={`filter-tab-${tab.toLowerCase()}`}
@@ -68,6 +141,14 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
               ? `All (${logs.length})`
               : tab === 'PROCESSED'
               ? 'Processed'
+              : tab === 'IMAGE_GENERATED'
+              ? '🎨 Image Gen'
+              : tab === 'NEWS'
+              ? '📰 News'
+              : tab === 'PROFANITY_BLOCKED'
+              ? 'Abuse Blocked'
+              : tab === 'PAUSED_OWNER_ACTIVE'
+              ? '🕒 Owner Silence'
               : tab === 'IGNORED_PHONE_MISMATCH'
               ? 'Filtered'
               : tab === 'BOT_DISABLED'
@@ -98,6 +179,57 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
                   <span>{log.sender}</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {log.routingCategory && (
+                    <span
+                      style={{
+                        background:
+                          log.routingCategory === 'IMAGE_GEN'
+                            ? 'rgba(236, 72, 153, 0.15)'
+                            : log.routingCategory === 'NEWS'
+                            ? 'rgba(6, 182, 212, 0.15)'
+                            : log.routingCategory === 'OWNER_ACTIVE'
+                            ? 'rgba(245, 158, 11, 0.15)'
+                            : log.routingCategory === 'ROUTINE'
+                            ? 'rgba(34, 197, 94, 0.15)'
+                            : 'rgba(168, 85, 247, 0.15)',
+                        color:
+                          log.routingCategory === 'IMAGE_GEN'
+                            ? '#f472b6'
+                            : log.routingCategory === 'NEWS'
+                            ? '#67e8f9'
+                            : log.routingCategory === 'OWNER_ACTIVE'
+                            ? '#fbbf24'
+                            : log.routingCategory === 'ROUTINE'
+                            ? '#4ade80'
+                            : '#c084fc',
+                        borderColor:
+                          log.routingCategory === 'IMAGE_GEN'
+                            ? 'rgba(236, 72, 153, 0.35)'
+                            : log.routingCategory === 'NEWS'
+                            ? 'rgba(6, 182, 212, 0.35)'
+                            : log.routingCategory === 'OWNER_ACTIVE'
+                            ? 'rgba(245, 158, 11, 0.35)'
+                            : log.routingCategory === 'ROUTINE'
+                            ? 'rgba(34, 197, 94, 0.35)'
+                            : 'rgba(168, 85, 247, 0.35)',
+                        fontSize: '0.7rem',
+                        padding: '2px 7px',
+                        borderRadius: 6,
+                        border: '1px solid',
+                      }}
+                      title={log.routingIntent ? `Intent: ${log.routingIntent}` : undefined}
+                    >
+                      {log.routingCategory === 'IMAGE_GEN'
+                        ? '🎨 Image Gen'
+                        : log.routingCategory === 'NEWS'
+                        ? '📰 News Wire'
+                        : log.routingCategory === 'OWNER_ACTIVE'
+                        ? '🕒 Owner Active'
+                        : log.routingCategory === 'ROUTINE'
+                        ? '⚡ Routine'
+                        : '🤖 Complex AI'}
+                    </span>
+                  )}
                   {getStatusBadge(log.status)}
                   <span className="time-tag">
                     <Clock size={11} style={{ display: 'inline', marginRight: 3 }} />
@@ -118,13 +250,100 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
                 </div>
 
                 {/* Outgoing reply if processed */}
-                {log.messageOut && (
+                {(log.messageOut || log.mediaUrl) && (
                   <div className="bubble-out">
                     <div className="bubble-label out">
-                      <Sparkles size={12} />
-                      Gemini AI Reply
+                      {log.routingCategory === 'IMAGE_GEN' ? (
+                        <span style={{ color: '#f472b6', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <Sparkles size={12} />
+                          Hugging Face FLUX AI Artwork Dispatched
+                        </span>
+                      ) : log.routingCategory === 'NEWS' ? (
+                        <span style={{ color: '#67e8f9', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <Newspaper size={12} />
+                          World News API Live Wire
+                        </span>
+                      ) : log.routingCategory === 'PROFANITY' ? (
+                        <span style={{ color: '#f87171', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <ShieldAlert size={12} />
+                          Owner Predefined Profanity Intercept
+                        </span>
+                      ) : log.routingCategory === 'ROUTINE' ? (
+                        <>⚡ Routine Template ({log.routingIntent || 'Fast Path'})</>
+                      ) : (
+                        <>
+                          <Sparkles size={12} />
+                          Gemini AI Reply
+                        </>
+                      )}
                     </div>
-                    <div>{log.messageOut}</div>
+                    {log.messageOut && <div>{log.messageOut}</div>}
+                    {log.mediaUrl && (
+                      <div
+                        style={{
+                          marginTop: 10,
+                          maxWidth: 320,
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          border: '1px solid rgba(255, 255, 255, 0.15)',
+                          background: 'rgba(0, 0, 0, 0.4)',
+                        }}
+                      >
+                        <a href={log.mediaUrl} target="_blank" rel="noopener noreferrer">
+                          <img
+                            src={log.mediaUrl}
+                            alt="Generated AI Artwork"
+                            style={{ width: '100%', height: 'auto', display: 'block', objectFit: 'cover' }}
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        </a>
+                        <div
+                          style={{
+                            padding: '5px 10px',
+                            background: 'rgba(0, 0, 0, 0.7)',
+                            fontSize: '0.74rem',
+                            color: '#cbd5e1',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <span>🎨 FLUX.1 Artwork</span>
+                          <a
+                            href={log.mediaUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: '#38bdf8', textDecoration: 'none', fontWeight: 500 }}
+                          >
+                            View Full Resolution ↗
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Owner Inactivity Pause indicator */}
+                {log.status === 'PAUSED_OWNER_ACTIVE' && (
+                  <div
+                    style={{
+                      background: 'rgba(245, 158, 11, 0.08)',
+                      borderLeft: '3px solid #f59e0b',
+                      padding: '8px 12px',
+                      borderRadius: 6,
+                      fontSize: '0.8rem',
+                      color: '#fde68a',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                    }}
+                  >
+                    <Timer size={15} color="#f59e0b" style={{ flexShrink: 0 }} />
+                    <span>
+                      <strong>Automated Reply Suppressed:</strong> Owner was active on this chat recently. The bot is in smart silence mode to prevent interrupting human conversation.
+                    </span>
                   </div>
                 )}
 

@@ -162,16 +162,28 @@ export default function App() {
     setAllOpenVersion((v) => v + 1);
   };
 
+  // Instant Auto-Reply All master toggle handler
+  const handleToggleAutoReplyAll = async () => {
+    const currentVal = settings?.autoReplyAll ?? false;
+    const nextVal = !currentVal;
+    // Optimistic UI update
+    setSettings((prev) => (prev ? { ...prev, autoReplyAll: nextVal } : prev));
+    await handleUpdateSettings({ autoReplyAll: nextVal });
+  };
+
   return (
     <div className="app-container">
       {/* Header */}
       <Header
         isEnabled={settings?.isEnabled ?? true}
+        autoReplyAll={settings?.autoReplyAll ?? false}
+        onToggleAutoReplyAll={handleToggleAutoReplyAll}
         serverOnline={serverOnline}
         onRefresh={handleRefresh}
         onOpenSimulator={() => setIsSimulatorOpen(true)}
         onOpenEnvModal={() => setIsEnvModalOpen(true)}
         refreshing={refreshing}
+        updating={updating}
       />
 
       {/* Metric Cards Bar */}

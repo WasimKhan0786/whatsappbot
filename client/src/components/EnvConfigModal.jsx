@@ -515,6 +515,28 @@ export default function EnvConfigModal({ isOpen, onClose, onSuccess }) {
                 <span className="overview-val">{envData?.messageLogTtlDays || 30} days</span>
               </div>
               <div className="overview-row">
+                <span className="overview-key">World News API Key:</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="code-pill">{envData?.maskedWorldNewsKey || 'None'}</span>
+                  <span
+                    className="label-badge"
+                    style={{
+                      background: envData?.hasWorldNewsKey ? 'rgba(6, 182, 212, 0.2)' : 'rgba(107, 114, 128, 0.2)',
+                      color: envData?.hasWorldNewsKey ? '#67e8f9' : '#9ca3af',
+                      borderColor: envData?.hasWorldNewsKey ? '#06b6d4' : 'rgba(255, 255, 255, 0.1)',
+                      fontSize: '0.7rem',
+                      padding: '2px 6px',
+                    }}
+                  >
+                    {envData?.hasWorldNewsKey ? 'Active 🌐' : 'Missing'}
+                  </span>
+                </div>
+              </div>
+              <div className="overview-row">
+                <span className="overview-key">Hugging Face API Key:</span>
+                <span className="code-pill">{envData?.maskedHuggingFaceKey || 'None'}</span>
+              </div>
+              <div className="overview-row">
                 <span className="overview-key">Server Port:</span>
                 <span className="overview-val">{envData?.port || 5000}</span>
               </div>

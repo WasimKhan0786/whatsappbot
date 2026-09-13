@@ -1,8 +1,9 @@
 const BotSettings = require("../models/BotSettings");
 const MessageLog = require("../models/MessageLog");
+const WhitelistContact = require("../models/WhitelistContact");
 const { generateGeminiReply } = require("../services/geminiService");
 const { checkActiveSchedule } = require("../services/scheduleService");
-const { sendWhatsAppMessage } = require("../services/whatsappService");
+const { sendWhatsAppMessage, sendWhatsAppImage } = require("../services/whatsappService");
 const {
   getGeminiChatHistory,
   recordMessageExchange,
@@ -16,6 +17,20 @@ const {
 } = require("../services/chatHistoryService");
 const { processGameTurn } = require("../services/gameService");
 const { buildDynamicPersonaPrompt } = require("../services/personaService");
+const {
+  validateTwilioSignature,
+  buildTwimlMessageResponse,
+  buildTwimlEmptyResponse,
+} = require("../services/twilioService");
+const { classifyMessage } = require("../services/messageRoutingService");
+const { detectProfanity } = require("../services/profanityService");
+const { extractImagePrompt, generateHuggingFaceImage } = require("../services/huggingFaceService");
+const { checkOwnerInactivityStatus } = require("../services/inactivityTimerService");
+const {
+  extractNewsQuery,
+  fetchRealTimeNews,
+  formatNewsForWhatsApp,
+} = require("../services/worldNewsService");
 
 /**
  * Normalizes phone numbers for comparison (removes all non-digit characters)
@@ -54,9 +69,398 @@ const verifyWebhook = (req, res) => {
 };
 
 /**
+ * Event handler for incoming Twilio WhatsApp messages (POST /webhook/twilio or POST /webhook)
+ */
+const handleTwilioWebhook = async (req, res) => {
+  try {
+    const params = req.body || {};
+    const accountSid = params.AccountSid;
+    const configuredSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+
+    // 1. Security Verification: Account SID Check
+    if (accountSid && configuredSid && accountSid !== configuredSid) {
+      console.warn(`❌ [Twilio] Webhook rejected: Unauthorized AccountSid "${accountSid}" (expected "${configuredSid}")`);
+      return res.status(403).type('text/xml').send(buildTwimlEmptyResponse());
+    }
+
+    // 2. Security Verification: Cryptographic Signature Check (if auth token configured)
+    if (authToken && authToken.trim() !== '') {
+      const signature = req.headers['x-twilio-signature'];
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+      const host = req.headers['x-forwarded-host'] || req.headers.host;
+      const fullUrl = `${protocol}://${host}${req.originalUrl || req.url}`;
+
+      const isValid = validateTwilioSignature(signature, fullUrl, params, authToken);
+      if (!isValid) {
+        console.warn('❌ [Twilio] Signature verification failed for incoming request.');
+        return res.status(403).type('text/xml').send(buildTwimlEmptyResponse());
+      }
+    }
+
+    // 3. Extract Message Details
+    const rawFrom = params.From || '';
+    const sender = rawFrom.replace(/^whatsapp:/i, '').trim();
+    const messageId = params.MessageSid || params.SmsMessageSid || params.SmsSid || `twilio_${Date.now()}`;
+    const profileName = params.ProfileName || '';
+    const numMedia = parseInt(params.NumMedia || '0', 10);
+
+    let messageText = (params.Body || '').trim();
+    if (!messageText && numMedia > 0) {
+      const contentType = params.MediaContentType0 || 'media';
+      messageText = `[Received ${contentType} via WhatsApp]`;
+    }
+
+    console.log(`📩 [Twilio] Incoming message from ${sender}${profileName ? ` (${profileName})` : ''}: "${messageText}" [SID: ${messageId}]`);
+
+    // Fetch current bot settings from MongoDB
+    const settings = await BotSettings.getSettings();
+
+    // 4. Check if Bot is Enabled
+    if (!settings.isEnabled) {
+      console.log(`⏸️ [Twilio] Bot is DISABLED. Skipping message from ${sender}.`);
+      await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: '',
+        status: 'BOT_DISABLED',
+        metaMessageId: messageId,
+      });
+      return res.type('text/xml').send(buildTwimlEmptyResponse());
+    }
+
+    // 5. Phone Number Filter & Auto-Reply All
+    const isAutoReplyAll = Boolean(settings.autoReplyAll);
+    const cleanSender = normalizePhoneNumber(sender);
+    let matchedContact = null;
+
+    try {
+      const allContacts = await WhitelistContact.find();
+      matchedContact = allContacts.find((c) => {
+        const cClean = normalizePhoneNumber(c.phoneNumber);
+        return cleanSender === cClean || cleanSender.endsWith(cClean) || cClean.endsWith(cleanSender);
+      });
+    } catch (cErr) {
+      console.warn('[Twilio] Contact lookup warning:', cErr.message);
+    }
+
+    if (!isAutoReplyAll) {
+      const rawAllowed = settings.allowedPhoneNumber || '';
+      const allowedList = rawAllowed
+        .split(/[,;\n\s]+/)
+        .map((num) => num.replace(/\D/g, ''))
+        .filter((num) => num.length >= 7 && num !== '1234567890');
+
+      const isAllowedByString = allowedList.some(
+        (allowed) => cleanSender === allowed || cleanSender.endsWith(allowed) || allowed.endsWith(cleanSender)
+      );
+
+      const isAllowed = matchedContact || isAllowedByString;
+
+      if (!isAllowed && (allowedList.length > 0 || rawAllowed.trim() !== '')) {
+        console.log(`🚫 [Twilio] Phone Filter: Sender ${sender} is not in whitelist and Auto-Reply All is OFF.`);
+        await MessageLog.create({
+          sender,
+          messageIn: messageText,
+          messageOut: '',
+          status: 'IGNORED_PHONE_MISMATCH',
+          metaMessageId: messageId,
+        });
+        return res.type('text/xml').send(buildTwimlEmptyResponse());
+      }
+    }
+
+    if (isAutoReplyAll) {
+      console.log(`🌐 [Twilio] Auto-Reply All is ACTIVE: Processing message from ${sender} with respectful, polite, and peaceful tone.`);
+    }
+
+    // 6. Check Per-Contact or Global Max Message Cap
+    const effectiveLimit = (matchedContact && typeof matchedContact.maxMessageLimit === 'number' && matchedContact.maxMessageLimit > 0)
+      ? matchedContact.maxMessageLimit
+      : (settings.defaultMaxMessagesPerContact || 0);
+
+    const sessionCountInfo = await getSessionMessageCount(sender);
+    if (effectiveLimit > 0 && sessionCountInfo.messagesSentCount >= effectiveLimit) {
+      console.log(`🛑 [Twilio] MAX MESSAGE LIMIT REACHED (${sessionCountInfo.messagesSentCount}/${effectiveLimit}) for ${sender}.`);
+      await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: `[Auto-Cap Reached (${sessionCountInfo.messagesSentCount}/${effectiveLimit}) - AI response skipped]`,
+        status: 'CAP_REACHED',
+        metaMessageId: messageId,
+      });
+      return res.type('text/xml').send(buildTwimlEmptyResponse());
+    }
+
+    // 7. Check if Live Agent Mode is Active
+    const isPausedForAgent = await isSessionHandedOff(sender);
+    if (isPausedForAgent) {
+      console.log(`🛑 [Twilio] Automated replies PAUSED for ${sender} (Live Agent Mode Active).`);
+      await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: '[Automated responses paused - Live agent active]',
+        status: 'PAUSED_FOR_AGENT',
+        metaMessageId: messageId,
+      });
+      return res.type('text/xml').send(buildTwimlEmptyResponse());
+    }
+
+    // 7.5 Check if session is paused due to Owner Inactivity Timer (Owner recently sent a message)
+    const inactivityStatus = await checkOwnerInactivityStatus(sender);
+    if (inactivityStatus.isPaused) {
+      console.log(`🤫 [Twilio] Automated replies PAUSED for ${sender} due to recent owner activity (${inactivityStatus.remainingMinutes}m remaining).`);
+      await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: `[Auto-replies paused - Owner active (${inactivityStatus.remainingMinutes}m remaining)]`,
+        status: 'PAUSED_OWNER_ACTIVE',
+        routingCategory: 'OWNER_ACTIVE',
+        routingIntent: 'OWNER_INACTIVITY_PAUSE',
+        metaMessageId: messageId,
+      });
+      return res.type('text/xml').send(buildTwimlEmptyResponse());
+    }
+
+    // 8. Agent keyword detection
+    const requestedAgent = detectAgentKeyword(messageText);
+    if (requestedAgent) {
+      console.log(`🚨 [Twilio] Live Agent requested by ${sender} via keyword.`);
+      await activateHandover(sender, 'KEYWORD_AGENT');
+
+      const isEnglishQuery = /^[a-zA-Z0-9\s.,!?'"()-]+$/.test(messageText) && !/\b(kya|bhai|bolo|karo|nahi)\b/i.test(messageText);
+      const handoverReply = isEnglishQuery
+        ? "I am connecting you with our live agent team immediately. Automated responses have been paused. A team member will assist you shortly."
+        : "Main aapko hamari live team se connect kar raha hoon. AI replies pause kar diye gaye hain, hamari team aapse jald hi rabta karegi.";
+
+      await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: handoverReply,
+        status: 'AGENT_HANDOFF_TRIGGERED',
+        metaMessageId: messageId,
+      });
+      await recordMessageExchange(sender, messageText, handoverReply);
+      return res.type('text/xml').send(buildTwimlMessageResponse(handoverReply));
+    }
+
+    // 9. Game turn check
+    const gameTurnResult = await processGameTurn(sender, messageText);
+    if (gameTurnResult.handled && gameTurnResult.replyText) {
+      console.log(`🎮 [Twilio] Game turn processed for ${sender}.`);
+      await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: gameTurnResult.replyText,
+        status: 'PROCESSED',
+        metaMessageId: messageId,
+      });
+      await recordMessageExchange(sender, messageText, gameTurnResult.replyText);
+      return res.type('text/xml').send(buildTwimlMessageResponse(gameTurnResult.replyText));
+    }
+
+    let replyText = '';
+    let routingCategory = 'COMPLEX';
+    let routingIntent = 'AI_COMPLEX';
+
+    // 🛑 PROFANITY & ABUSE DETECTION INTERCEPT (Owner-Predefined Reply)
+    const isProfanityFilterActive = settings.profanityFilterEnabled ?? true;
+    if (isProfanityFilterActive) {
+      const profanityResult = detectProfanity(messageText, settings.customProfanityKeywords || []);
+      if (profanityResult.hasProfanity) {
+        console.log(`🛑 [Twilio] ABUSE / PROFANITY DETECTED from ${sender} (Word: "${profanityResult.detectedWord}"). Intercepting and bypassing Gemini AI.`);
+        replyText = settings.profanityReplyMessage ||
+          'Kripya sabhya bhasha ka prayog karein. Hum yahan aadar aur maryada ke saath baat karne ke liye upasthit hain. Please maintain respectful communication.';
+        routingCategory = 'PROFANITY';
+        routingIntent = `BLOCKED_PROFANITY_${profanityResult.detectedWord?.toUpperCase() || 'ABUSE'}`;
+      }
+    }
+
+    // 🎨 HUGGING FACE TEXT-TO-IMAGE GENERATION INTERCEPT
+    let generatedImageResult = null;
+    const isImageGenActive = settings.imageGenerationEnabled ?? true;
+    if (!replyText && isImageGenActive) {
+      const imagePromptExtraction = extractImagePrompt(messageText);
+      if (imagePromptExtraction.isImageRequest && imagePromptExtraction.prompt) {
+        console.log(`🎨 [Twilio] Image request: "${imagePromptExtraction.prompt}"`);
+        try {
+          generatedImageResult = await generateHuggingFaceImage(
+            imagePromptExtraction.prompt,
+            settings.imageGenerationModel || 'black-forest-labs/FLUX.1-schnell'
+          );
+          replyText = `🎨 Generated Image for: "${imagePromptExtraction.prompt}"\nModel: ${generatedImageResult.model} (${generatedImageResult.durationSeconds}s)`;
+          routingCategory = 'IMAGE_GEN';
+          routingIntent = 'TEXT_TO_IMAGE_FLUX';
+        } catch (imgErr) {
+          console.error('[Twilio] Image generation error:', imgErr.message);
+          replyText = `Image generation error: ${imgErr.message}`;
+        }
+      }
+    }
+
+    // 📰 REAL-TIME WORLD NEWS INTERCEPT (World News API)
+    const isNewsActive = settings.newsEnabled ?? true;
+    if (!replyText && isNewsActive) {
+      const newsQuery = extractNewsQuery(messageText);
+      if (newsQuery.isNewsRequest) {
+        console.log(`📰 [Twilio] Real-time news request detected! Topic: "${newsQuery.topic || 'Top Headlines'}"`);
+        try {
+          const newsData = await fetchRealTimeNews({
+            text: newsQuery.topic,
+            country: settings.newsDefaultCountry || 'in',
+            language: settings.newsDefaultLanguage || 'en',
+            number: settings.newsMaxArticles || 3,
+          });
+
+          if (newsData.success && newsData.articles && newsData.articles.length > 0) {
+            replyText = formatNewsForWhatsApp(
+              newsData.articles,
+              newsQuery.topic || 'Top Headlines',
+              settings.newsDefaultCountry || 'in'
+            );
+            routingCategory = 'NEWS';
+            routingIntent = newsQuery.topic ? `NEWS_SEARCH:${newsQuery.topic.substring(0, 30)}` : 'NEWS_TOP_HEADLINES';
+          }
+        } catch (newsErr) {
+          console.error('[Twilio] Real-time news fetch error:', newsErr.message);
+        }
+      }
+    }
+
+    try {
+      if (!replyText) {
+        const matchedSchedule = await checkActiveSchedule(new Date(), matchedContact?.relationship, sender);
+        if (matchedSchedule) {
+          console.log(`📅 [Twilio] Active schedule matched: "${matchedSchedule.title}"`);
+          replyText = matchedSchedule.autoReplyText;
+          routingCategory = 'SCHEDULE';
+          routingIntent = 'SCHEDULED_EVENT';
+        }
+      }
+    } catch (schedErr) {
+      console.warn('[Twilio] Schedule check warning:', schedErr.message);
+    }
+
+    // 11. Message Classification & Routing (Routine vs Complex)
+    if (!replyText) {
+      try {
+        const classification = await classifyMessage(messageText, matchedContact);
+        if (classification.category === 'ROUTINE' && classification.templateReply) {
+          console.log(`⚡ [Twilio] Routine inquiry identified: [${classification.intentKey}] -> Predefined template reply.`);
+          replyText = classification.templateReply;
+          routingCategory = 'ROUTINE';
+          routingIntent = classification.intentKey;
+        } else {
+          console.log(`🤖 [Twilio] Complex query identified: [${classification.intentKey}] -> Routing to Gemini AI model.`);
+          routingCategory = 'COMPLEX';
+          routingIntent = classification.intentKey;
+        }
+      } catch (routeErr) {
+        console.warn('[Twilio] Routing classification warning:', routeErr.message);
+      }
+    }
+
+    // 12. Generate Google Gemini AI Reply for complex queries
+    let failResult = null;
+    if (!replyText) {
+      console.log(`🤖 [Twilio] Generating ${isAutoReplyAll ? 'respectful & peaceful ' : 'polite '}Gemini reply for ${sender}...`);
+      try {
+        const chatHistory = await getGeminiChatHistory(sender);
+        const dynamicPrompt = buildDynamicPersonaPrompt(
+          settings.systemPrompt,
+          matchedContact,
+          sender,
+          messageText,
+          null,
+          isAutoReplyAll
+        );
+        replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
+        await resetFailedAttempts(sender);
+      } catch (geminiErr) {
+        console.error('[Twilio] Gemini error:', geminiErr.message);
+        failResult = await recordFailedAttempt(sender);
+        if (failResult.triggeredHandover) {
+          replyText = "I apologize, but I am unable to properly resolve your query. I have notified our live agent team immediately and paused automated replies so a human can step in to assist you.";
+        } else {
+          await MessageLog.create({
+            sender,
+            messageIn: messageText,
+            messageOut: '',
+            status: 'ERROR',
+            routingCategory,
+            routingIntent,
+            errorMessage: `Gemini failure (attempt ${failResult.unresolvedAttempts}/3): ${geminiErr.message}`,
+            metaMessageId: messageId,
+          });
+          return res.type('text/xml').send(buildTwimlEmptyResponse());
+        }
+      }
+    }
+
+    // 13. Record log in MongoDB
+    await MessageLog.create({
+      sender,
+      messageIn: messageText,
+      messageOut: replyText,
+      status: generatedImageResult
+        ? 'IMAGE_GENERATED'
+        : routingCategory === 'PROFANITY'
+        ? 'PROFANITY_BLOCKED'
+        : failResult?.triggeredHandover
+        ? 'AGENT_HANDOFF_TRIGGERED'
+        : 'PROCESSED',
+      mediaUrl: generatedImageResult?.publicUrl || null,
+      routingCategory,
+      routingIntent,
+      metaMessageId: messageId,
+    });
+
+    // 13. Record to ChatSession history
+    try {
+      await recordMessageExchange(sender, messageText, replyText);
+    } catch (histErr) {
+      console.warn('[Twilio] History record error:', histErr.message);
+    }
+
+    // 14. Increment contact count & handle auto-closing message
+    if (effectiveLimit > 0) {
+      const incResult = await incrementSessionMessageCount(sender, effectiveLimit);
+      if (incResult.reachedCapNow && incResult.currentCount === effectiveLimit) {
+        const closingText = (settings.limitReachedClosingMessage && settings.limitReachedClosingMessage.trim() !== '')
+          ? settings.limitReachedClosingMessage.trim()
+          : 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke unke banaye huye AI wasim bot se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much!';
+
+        replyText += `\n\n${closingText}`;
+      }
+    }
+
+    console.log(`✅ [Twilio] Successfully generated response for ${sender}`);
+    return res.type('text/xml').send(buildTwimlMessageResponse(replyText));
+  } catch (err) {
+    console.error('Twilio webhook processing exception:', err);
+    return res.type('text/xml').send(buildTwimlEmptyResponse());
+  }
+};
+
+/**
  * Event handler for incoming WhatsApp messages (POST /webhook)
+ * Automatically detects and processes Twilio WhatsApp webhooks or Meta Cloud API webhooks
  */
 const handleIncoming = async (req, res) => {
+  // Auto-detect if request is from Twilio WhatsApp webhook
+  const isTwilio = Boolean(
+    req.body && (
+      req.body.AccountSid ||
+      req.body.MessageSid ||
+      req.body.SmsSid ||
+      (typeof req.body.From === 'string' && req.body.From.startsWith('whatsapp:'))
+    )
+  );
+
+  if (isTwilio) {
+    return handleTwilioWebhook(req, res);
+  }
+
   // Always return 200 OK to Meta quickly to acknowledge receipt
   try {
     const body = req.body;
@@ -123,40 +527,55 @@ const handleIncoming = async (req, res) => {
 
     // 2. Phone Number Filter: Process only from selected allowed phone numbers unless autoReplyAll is enabled
     const isAutoReplyAll = Boolean(settings.autoReplyAll);
-    if (!isAutoReplyAll && settings.allowedPhoneNumber && settings.allowedPhoneNumber.trim() !== '') {
-      const allowedList = settings.allowedPhoneNumber
+    const cleanSender = normalizePhoneNumber(sender);
+    let matchedContact = null;
+
+    try {
+      const allContacts = await WhitelistContact.find();
+      matchedContact = allContacts.find((c) => {
+        const cClean = normalizePhoneNumber(c.phoneNumber);
+        return cleanSender === cClean || cleanSender.endsWith(cClean) || cClean.endsWith(cleanSender);
+      });
+    } catch (cErr) {
+      console.warn("Webhook contact lookup warning:", cErr.message);
+    }
+
+    if (!isAutoReplyAll) {
+      const rawAllowed = settings.allowedPhoneNumber || '';
+      const allowedList = rawAllowed
         .split(/[,;\n\s]+/)
         .map((num) => num.replace(/\D/g, ''))
         .filter((num) => num.length >= 7 && num !== '1234567890');
 
-      if (allowedList.length > 0) {
-        const cleanSender = sender.replace(/\D/g, '');
-        const isAllowed = allowedList.some(
-          (allowed) => cleanSender === allowed || cleanSender.endsWith(allowed) || allowed.endsWith(cleanSender)
-        );
+      const isAllowedByString = allowedList.some(
+        (allowed) => cleanSender === allowed || cleanSender.endsWith(allowed) || allowed.endsWith(cleanSender)
+      );
 
-        if (!isAllowed) {
-          console.log(
-            `🚫 Phone Filter: Sender ${sender} is not in your selected allowed numbers list and Auto-Reply All is OFF. Message filtered.`
-          );
-          await MessageLog.create({
-            sender,
-            messageIn: messageText,
-            messageOut: '',
-            status: 'IGNORED_PHONE_MISMATCH',
-            metaMessageId: messageId,
-          });
-          return res.status(200).json({ status: 'ignored_phone_mismatch' });
-        }
+      const isAllowed = matchedContact || isAllowedByString;
+
+      if (!isAllowed && (allowedList.length > 0 || rawAllowed.trim() !== '')) {
+        console.log(
+          `🚫 Phone Filter: Sender ${sender} is not in your selected allowed numbers list and Auto-Reply All is OFF. Message filtered.`
+        );
+        await MessageLog.create({
+          sender,
+          messageIn: messageText,
+          messageOut: '',
+          status: 'IGNORED_PHONE_MISMATCH',
+          metaMessageId: messageId,
+        });
+        return res.status(200).json({ status: 'ignored_phone_mismatch' });
       }
     }
 
     if (isAutoReplyAll) {
-      console.log(`🌐 Auto-Reply All is ACTIVE: Processing webhook message from ${sender}.`);
+      console.log(`🌐 Auto-Reply All is ACTIVE: Processing incoming webhook message from ${sender} with respectful, polite, and peaceful tone.`);
     }
 
-    // 2.2 Global Max Message Cap Check
-    const effectiveLimit = settings.defaultMaxMessagesPerContact || 0;
+    // 2.2 Max Message Cap Check (Per-Contact or Global default)
+    const effectiveLimit = (matchedContact && typeof matchedContact.maxMessageLimit === 'number' && matchedContact.maxMessageLimit > 0)
+      ? matchedContact.maxMessageLimit
+      : (settings.defaultMaxMessagesPerContact || 0);
     const sessionCountInfo = await getSessionMessageCount(sender);
     if (effectiveLimit > 0 && sessionCountInfo.messagesSentCount >= effectiveLimit) {
       console.log(`🛑 MAX MESSAGE LIMIT REACHED (${sessionCountInfo.messagesSentCount}/${effectiveLimit}) for ${sender}. Skipping automated reply.`);
@@ -182,6 +601,22 @@ const handleIncoming = async (req, res) => {
         metaMessageId: messageId,
       });
       return res.status(200).json({ status: 'paused_for_agent' });
+    }
+
+    // 2.55 Check if session is paused due to Owner Inactivity Timer (Owner recently sent a message)
+    const inactivityStatus = await checkOwnerInactivityStatus(sender);
+    if (inactivityStatus.isPaused) {
+      console.log(`🤫 Automated replies PAUSED for ${sender} due to recent owner activity (${inactivityStatus.remainingMinutes}m remaining).`);
+      await MessageLog.create({
+        sender,
+        messageIn: messageText,
+        messageOut: `[Auto-replies paused - Owner active (${inactivityStatus.remainingMinutes}m remaining)]`,
+        status: 'PAUSED_OWNER_ACTIVE',
+        routingCategory: 'OWNER_ACTIVE',
+        routingIntent: 'OWNER_INACTIVITY_PAUSE',
+        metaMessageId: messageId,
+      });
+      return res.status(200).json({ status: 'paused_owner_active' });
     }
 
     // 2.6 Check if user explicitly typed 'agent' or 'human' keyword
@@ -233,23 +668,120 @@ const handleIncoming = async (req, res) => {
 
     // 3. Check for active predefined schedule (e.g. Gym timing, Birthday event)
     let replyText = "";
+    let routingCategory = "COMPLEX";
+    let routingIntent = "AI_COMPLEX";
+
+    // 🛑 PROFANITY & ABUSE DETECTION INTERCEPT (Owner-Predefined Reply)
+    const isProfanityFilterActive = settings.profanityFilterEnabled ?? true;
+    if (isProfanityFilterActive) {
+      const profanityResult = detectProfanity(messageText, settings.customProfanityKeywords || []);
+      if (profanityResult.hasProfanity) {
+        console.log(`🛑 [Meta] ABUSE / PROFANITY DETECTED from ${sender} (Word: "${profanityResult.detectedWord}"). Intercepting and bypassing Gemini AI.`);
+        replyText = settings.profanityReplyMessage ||
+          'Kripya sabhya bhasha ka prayog karein. Hum yahan aadar aur maryada ke saath baat karne ke liye upasthit hain. Please maintain respectful communication.';
+        routingCategory = 'PROFANITY';
+        routingIntent = `BLOCKED_PROFANITY_${profanityResult.detectedWord?.toUpperCase() || 'ABUSE'}`;
+      }
+    }
+
+    // 🎨 HUGGING FACE TEXT-TO-IMAGE GENERATION INTERCEPT
+    let generatedImageResult = null;
+    const isImageGenActive = settings.imageGenerationEnabled ?? true;
+    if (!replyText && isImageGenActive) {
+      const imagePromptExtraction = extractImagePrompt(messageText);
+      if (imagePromptExtraction.isImageRequest && imagePromptExtraction.prompt) {
+        console.log(`🎨 [Meta] Image request: "${imagePromptExtraction.prompt}"`);
+        try {
+          generatedImageResult = await generateHuggingFaceImage(
+            imagePromptExtraction.prompt,
+            settings.imageGenerationModel || 'black-forest-labs/FLUX.1-schnell'
+          );
+          replyText = `🎨 Generated Image for: "${imagePromptExtraction.prompt}"\nModel: ${generatedImageResult.model} (${generatedImageResult.durationSeconds}s)`;
+          routingCategory = 'IMAGE_GEN';
+          routingIntent = 'TEXT_TO_IMAGE_FLUX';
+        } catch (imgErr) {
+          console.error('[Meta] Image generation error:', imgErr.message);
+          replyText = `Image generation error: ${imgErr.message}`;
+        }
+      }
+    }
+
+    // 📰 REAL-TIME WORLD NEWS INTERCEPT (World News API)
+    const isNewsActive = settings.newsEnabled ?? true;
+    if (!replyText && isNewsActive) {
+      const newsQuery = extractNewsQuery(messageText);
+      if (newsQuery.isNewsRequest) {
+        console.log(`📰 [Meta] Real-time news request detected! Topic: "${newsQuery.topic || 'Top Headlines'}"`);
+        try {
+          const newsData = await fetchRealTimeNews({
+            text: newsQuery.topic,
+            country: settings.newsDefaultCountry || 'in',
+            language: settings.newsDefaultLanguage || 'en',
+            number: settings.newsMaxArticles || 3,
+          });
+
+          if (newsData.success && newsData.articles && newsData.articles.length > 0) {
+            replyText = formatNewsForWhatsApp(
+              newsData.articles,
+              newsQuery.topic || 'Top Headlines',
+              settings.newsDefaultCountry || 'in'
+            );
+            routingCategory = 'NEWS';
+            routingIntent = newsQuery.topic ? `NEWS_SEARCH:${newsQuery.topic.substring(0, 30)}` : 'NEWS_TOP_HEADLINES';
+          }
+        } catch (newsErr) {
+          console.error('[Meta] Real-time news fetch error:', newsErr.message);
+        }
+      }
+    }
+
     try {
-      const matchedSchedule = await checkActiveSchedule(new Date());
-      if (matchedSchedule) {
-        console.log(`📅 Active schedule matched: "${matchedSchedule.title}" -> Using scheduled auto-reply.`);
-        replyText = matchedSchedule.autoReplyText;
+      if (!replyText) {
+        const matchedSchedule = await checkActiveSchedule(new Date(), matchedContact?.relationship, sender);
+        if (matchedSchedule) {
+          console.log(`📅 Active schedule matched: "${matchedSchedule.title}" -> Using scheduled auto-reply.`);
+          replyText = matchedSchedule.autoReplyText;
+          routingCategory = "SCHEDULE";
+          routingIntent = "SCHEDULED_EVENT";
+        }
       }
     } catch (schedErr) {
       console.warn("Schedule check error:", schedErr.message);
     }
 
-    // If no active schedule matched, process with Google Gemini API with dynamic style mirroring
+    // Message Classification & Routing (Routine vs Complex)
+    if (!replyText) {
+      try {
+        const classification = await classifyMessage(messageText, matchedContact);
+        if (classification.category === 'ROUTINE' && classification.templateReply) {
+          console.log(`⚡ Routine message identified: [${classification.intentKey}] -> Serving predefined template.`);
+          replyText = classification.templateReply;
+          routingCategory = 'ROUTINE';
+          routingIntent = classification.intentKey;
+        } else {
+          console.log(`🤖 Complex inquiry identified: [${classification.intentKey}] -> Routing to Gemini AI model.`);
+          routingCategory = 'COMPLEX';
+          routingIntent = classification.intentKey;
+        }
+      } catch (routeErr) {
+        console.warn("Routing classification error:", routeErr.message);
+      }
+    }
+
+    // If no active schedule or routine template matched, process with Google Gemini API
     let failResult = null;
     if (!replyText) {
-      console.log(`🤖 Generating polite Gemini reply for ${sender}...`);
+      console.log(`🤖 Generating ${isAutoReplyAll ? 'respectful & peaceful ' : 'polite '}Gemini reply for ${sender}...`);
       try {
         const chatHistory = await getGeminiChatHistory(sender);
-        const dynamicPrompt = buildDynamicPersonaPrompt(settings.systemPrompt, null, sender, messageText);
+        const dynamicPrompt = buildDynamicPersonaPrompt(
+          settings.systemPrompt,
+          matchedContact,
+          sender,
+          messageText,
+          null,
+          isAutoReplyAll
+        );
         replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
         await resetFailedAttempts(sender);
       } catch (geminiErr) {
@@ -264,6 +796,8 @@ const handleIncoming = async (req, res) => {
             messageIn: messageText,
             messageOut: "",
             status: "ERROR",
+            routingCategory,
+            routingIntent,
             errorMessage: `Gemini failure (attempt ${failResult.unresolvedAttempts}/3): ${geminiErr.message}`,
             metaMessageId: messageId,
           });
@@ -276,14 +810,27 @@ const handleIncoming = async (req, res) => {
 
     // 4. Send response back via Meta WhatsApp Cloud API
     try {
-      await sendWhatsAppMessage(sender, replyText);
+      if (generatedImageResult && generatedImageResult.publicUrl) {
+        await sendWhatsAppImage(sender, generatedImageResult.publicUrl, replyText);
+      } else {
+        await sendWhatsAppMessage(sender, replyText);
+      }
 
       // 5. Log processed conversation in MongoDB
       await MessageLog.create({
         sender,
         messageIn: messageText,
         messageOut: replyText,
-        status: failResult?.triggeredHandover ? 'AGENT_HANDOFF_TRIGGERED' : 'PROCESSED',
+        status: generatedImageResult
+          ? 'IMAGE_GENERATED'
+          : routingCategory === 'PROFANITY'
+          ? 'PROFANITY_BLOCKED'
+          : failResult?.triggeredHandover
+          ? 'AGENT_HANDOFF_TRIGGERED'
+          : 'PROCESSED',
+        mediaUrl: generatedImageResult?.publicUrl || null,
+        routingCategory,
+        routingIntent,
         metaMessageId: messageId,
       });
 
@@ -346,5 +893,6 @@ const handleIncoming = async (req, res) => {
 module.exports = {
   verifyWebhook,
   handleIncoming,
+  handleTwilioWebhook,
   normalizePhoneNumber,
 };

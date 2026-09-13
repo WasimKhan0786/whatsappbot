@@ -1,12 +1,15 @@
-import { Bot, KeyRound, RefreshCw, Send, Sparkles, Wifi, WifiOff } from 'lucide-react';
+import { Bot, Globe, KeyRound, RefreshCw, Send, Sparkles, Wifi, WifiOff } from 'lucide-react';
 
 export default function Header({
   isEnabled,
+  autoReplyAll = false,
+  onToggleAutoReplyAll,
   serverOnline,
   onRefresh,
   onOpenSimulator,
   onOpenEnvModal,
   refreshing,
+  updating,
 }) {
   return (
     <header className="header-glass">
@@ -36,6 +39,42 @@ export default function Header({
         >
           <span className="status-dot"></span>
           <span>{isEnabled ? 'Bot Active & Listening' : 'Bot Disabled'}</span>
+        </div>
+
+        {/* Global Auto-Reply All Toggle Switch */}
+        <div
+          id="header-auto-reply-all-toggle"
+          className={`global-toggle-pill ${autoReplyAll ? 'active' : 'inactive'}`}
+          title={
+            autoReplyAll
+              ? 'Auto-Reply All: ENABLED (Responding politely to all incoming messages)'
+              : 'Auto-Reply All: DISABLED (Whitelist filter active)'
+          }
+        >
+          <div className="global-toggle-indicator">
+            <Globe size={14} className={autoReplyAll ? 'spin-slow' : ''} color={autoReplyAll ? '#818cf8' : '#9ca3af'} />
+            <span className="global-toggle-text">
+              Auto-Reply All:{' '}
+              <strong style={{ color: autoReplyAll ? '#a5b4fc' : '#9ca3af' }}>
+                {autoReplyAll ? 'ON' : 'OFF'}
+              </strong>
+            </span>
+          </div>
+          <button
+            id="header-auto-reply-all-btn"
+            type="button"
+            className={`toggle-switch small ${autoReplyAll ? 'on' : ''}`}
+            onClick={onToggleAutoReplyAll}
+            disabled={updating}
+            role="switch"
+            aria-checked={autoReplyAll}
+            aria-label="Toggle Global Auto-Reply All"
+            style={{
+              background: autoReplyAll ? '#6366f1' : undefined,
+            }}
+          >
+            <span className="toggle-knob"></span>
+          </button>
         </div>
 
         {/* Server Health Status */}
