@@ -640,6 +640,25 @@ const simulateIncoming = async (req, res) => {
         const chatHistory = await getGeminiChatHistory(sender);
         replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
         await resetFailedAttempts(sender);
+
+        const geminiImageMatch = replyText && replyText.match(/\[GENERATE_IMAGE:\s*([^\]]+)\]/i);
+        if (geminiImageMatch && geminiImageMatch[1]) {
+          const imagePrompt = geminiImageMatch[1].trim();
+          replyText = replyText.replace(geminiImageMatch[0], '').trim();
+          try {
+            generatedImageResult = await generateHuggingFaceImage(
+              imagePrompt,
+              settings.imageGenerationModel || 'black-forest-labs/FLUX.1-schnell'
+            );
+            if (!replyText) {
+              replyText = `🎨 *Generated Image for:* "${imagePrompt}"`;
+            }
+            routingCategory = 'IMAGE_GEN';
+            routingIntent = 'GEMINI_FLUX_DIFFUSION';
+          } catch (hfImgErr) {
+            console.error('[Simulate] Gemini image gen error:', hfImgErr.message);
+          }
+        }
       } catch (aiErr) {
         console.warn('Simulation AI generation error:', aiErr.message);
         failResult = await recordFailedAttempt(sender);

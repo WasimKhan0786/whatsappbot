@@ -791,6 +791,27 @@ async function initBaileys(forceRestart = false) {
               const chatHistory = await getGeminiChatHistory(senderPhone);
               replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory, processedMedia);
               await resetFailedAttempts(senderPhone);
+
+              // 🎨 Intercept Gemini-triggered image generation tag [GENERATE_IMAGE: <prompt>]
+              const geminiImageMatch = replyText && replyText.match(/\[GENERATE_IMAGE:\s*([^\]]+)\]/i);
+              if (geminiImageMatch && geminiImageMatch[1]) {
+                const imagePrompt = geminiImageMatch[1].trim();
+                replyText = replyText.replace(geminiImageMatch[0], '').trim();
+                console.log(`[Baileys] 🎨 Gemini triggered image generation tag: "${imagePrompt}"`);
+                try {
+                  generatedImageResult = await generateHuggingFaceImage(
+                    imagePrompt,
+                    settings.imageGenerationModel || 'black-forest-labs/FLUX.1-schnell'
+                  );
+                  if (!replyText) {
+                    replyText = `🎨 *Generated Image for:* "${imagePrompt}"`;
+                  }
+                  routingCategory = 'IMAGE_GEN';
+                  routingIntent = 'GEMINI_FLUX_DIFFUSION';
+                } catch (hfImgErr) {
+                  console.error('[Baileys] Gemini-triggered image generation error:', hfImgErr.message);
+                }
+              }
             } catch (aiErr) {
               console.warn(`[Baileys] Gemini generation error:`, aiErr.message);
               failResult = await recordFailedAttempt(senderPhone);

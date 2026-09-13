@@ -20,6 +20,7 @@ if (!fs.existsSync(GENERATED_IMAGES_DIR)) {
 
 /**
  * Checks if incoming text is asking to generate/draw an image and extracts the prompt.
+ * Supports all common English, Hindi, Hinglish, and Urdu phrasings (commands, natural questions, statements).
  * 
  * @param {string} text - The raw incoming WhatsApp text message
  * @returns {{ isImageRequest: boolean, prompt: string|null }}
@@ -31,42 +32,129 @@ function extractImagePrompt(text) {
 
   const clean = text.trim();
 
-  // Pattern 1: Slash command or direct commands (/image, /imagine, /draw, /photo)
-  const cmdMatch = clean.match(/^[\/!#]?(image|imagine|draw|generate_image|generateimage|photo)\s+(.+)$/i);
-  if (cmdMatch && cmdMatch[2]) {
-    return { isImageRequest: true, prompt: cmdMatch[2].trim() };
+  // Pattern 1: Slash command or direct commands (/image, /imagine, /draw, /photo, !photo, etc.)
+  const cmdMatch = clean.match(/^[\/!#]?(?:image|imagine|draw|generate_image|generateimage|genimage|photo|pic)\s+(.+)$/i);
+  if (cmdMatch && cmdMatch[1]) {
+    return { isImageRequest: true, prompt: sanitizePrompt(cmdMatch[1]) };
   }
 
-  // Pattern 2: English natural language requests
-  // e.g. "generate an image of a red cat", "create a picture of a spaceship", "draw me a sunset", "make an image of..."
-  const englishMatch = clean.match(
-    /^(please\s+)?(generate|create|make|draw|paint|render)\s+(an?\s+)?(image|picture|photo|illustration|art|painting|drawing)\s+(of|for|showing|depicting)?\s+(.+)$/i
-  );
-  if (englishMatch && englishMatch[6]) {
-    return { isImageRequest: true, prompt: englishMatch[6].trim() };
-  }
+  // Common keywords & regex components
+  const IMAGE_WORDS = '(?:image|images|img|imgs|picture|pictures|photo|photos|photu|photua|pic|pics|tasveer|tasveerein|taswiren|dp|wallpaper|art|artwork|drawing|painting|illustration|sketch)';
+  const CREATE_VERBS_HI = '(?:banao|banado|bana\\s*do|bana\\s*de|bana\\s*dena|banaoge|bana\\s*doge|bana\\s*sakoge|bana\\s*sakte\\s*ho|generate\\s*(?:karo|kardo|krdo|kar\\s*do|karoge)|create\\s*(?:karo|kardo|krdo|kar\\s*do)|bhejo|bhej\\s*do|bhejna|bhejoge|send\\s*(?:karo|kardo|krdo|kar\\s*do)|dikhao|dikhado|dikha\\s*do|dikhaoge|chahiye|mangta|honi\\s*chahiye)';
+  const CREATE_VERBS_EN = '(?:generate|create|make|draw|paint|render|send|show|give|produce)';
 
-  // Pattern 3: Hinglish requests
-  // e.g. "ek billi ki photo banao", "supercar ki image generate karo", "taj mahal ki tasveer dikhao", "photo bana kar bhejo"
-  const hinglishMatch = clean.match(
-    /(?:ek\s+)?(.+?)\s+ki\s+(photo|image|tasveer|pic|picture)\s+(banao|generate\s*karo|dikhao|bhejo|create\s*karo)/i
+  // Pattern 2: Hinglish: (ek)? (subject) (ki/ka/ke/wali/wala) (image_words) (verb)?
+  // e.g. "Ek cat ki image banado", "Generate a cat images", "Ek cat ki images banaoge", "sher ka photo banao", "dog ki pic bhejo"
+  const hiPattern1 = new RegExp(
+    '(?:(?:mujhe|humko|kripya|please)\\s+)?(?:ek\\s+)?(.+?)\\s+(?:ki|ka|ke|wali|wala)\\s+' +
+      IMAGE_WORDS +
+      '(?:\\s+' +
+      CREATE_VERBS_HI +
+      ')?(?:\\s+(?:please|bhai|yaar|na|fast|jaldi))?$',
+    'i'
   );
-  if (hinglishMatch && hinglishMatch[1]) {
-    const extractedSubject = hinglishMatch[1].trim();
-    // Exclude generic queries like "kisi cheez ki photo bhejo" without real prompt
-    if (extractedSubject.length > 2) {
-      return { isImageRequest: true, prompt: `${extractedSubject}, realistic, high quality, 4k` };
+  const hiMatch1 = clean.match(hiPattern1);
+  if (hiMatch1 && hiMatch1[1]) {
+    const rawSubject = hiMatch1[1].replace(/^(?:mujhe|humko|kripya|please|can\s+you)\s+/i, '').trim();
+    if (rawSubject.length > 1 && !/^(?:kya|kyu|kaise|kab|kaha|who|why|what|how)$/i.test(rawSubject)) {
+      return { isImageRequest: true, prompt: sanitizePrompt(rawSubject) };
     }
   }
 
-  const hinglishMatch2 = clean.match(
-    /(photo|image|tasveer|pic)\s+(banao|generate\s*karo|create\s*karo)\s+(?:of\s+|for\s+)?(.+)/i
+  // Pattern 3: Hinglish: (image_word) (create_verb) (of/ki/ka)? (subject)
+  // e.g. "photo banao cat ki", "image banado taj mahal ki", "pic bhejo ek car ki"
+  const hiPattern2 = new RegExp(
+    '^' + IMAGE_WORDS + '\\s+' + CREATE_VERBS_HI + '(?:\\s+(?:of|for|ki|ka|ke))?\\s+(.+)$',
+    'i'
   );
-  if (hinglishMatch2 && hinglishMatch2[3]) {
-    return { isImageRequest: true, prompt: hinglishMatch2[3].trim() };
+  const hiMatch2 = clean.match(hiPattern2);
+  if (hiMatch2 && hiMatch2[1]) {
+    return { isImageRequest: true, prompt: sanitizePrompt(hiMatch2[1]) };
+  }
+
+  // Pattern 4: English Natural: (can you)? (verb) (me/us)? (an)? (image_word) of/for (subject)
+  // e.g. "generate an image of a red cat", "create a picture of a spaceship", "draw me a sunset", "make an image of..."
+  const enPattern1 = new RegExp(
+    '^(?:can\\s+you\\s+|could\\s+you\\s+|please\\s+|i\\s+want\\s+)?' +
+      CREATE_VERBS_EN +
+      '(?:\\s+(?:me|us))?(?:\\s+(?:an?|the|some))?\\s+' +
+      IMAGE_WORDS +
+      '(?:\\s+(?:of|for|showing|depicting))?\\s+(.+)$',
+    'i'
+  );
+  const enMatch1 = clean.match(enPattern1);
+  if (enMatch1 && enMatch1[1]) {
+    return { isImageRequest: true, prompt: sanitizePrompt(enMatch1[1]) };
+  }
+
+  // Pattern 5: English Natural: (can you)? (verb) (me/us)? (an)? (subject) (image_word)
+  // e.g. "Generate a cat images", "create batman photo", "send cat pictures", "draw sunset art"
+  const enPattern2 = new RegExp(
+    '^(?:can\\s+you\\s+|could\\s+you\\s+|please\\s+|i\\s+want\\s+)?' +
+      CREATE_VERBS_EN +
+      '(?:\\s+(?:me|us))?(?:\\s+(?:an?|the|some))?\\s+(.+?)\\s+' +
+      IMAGE_WORDS +
+      '(?:\\s+(?:please|fast|now))?$',
+    'i'
+  );
+  const enMatch2 = clean.match(enPattern2);
+  if (enMatch2 && enMatch2[1]) {
+    return { isImageRequest: true, prompt: sanitizePrompt(enMatch2[1]) };
+  }
+
+  // Pattern 6: Concise (subject) (image_word)
+  // e.g. "cat images", "supercar wallpaper", "cute puppy photo"
+  const enPattern3 = new RegExp('^(?:a|an|the|some)?\\s*(.+?)\\s+' + IMAGE_WORDS + '$', 'i');
+  const enMatch3 = clean.match(enPattern3);
+  if (enMatch3 && enMatch3[1] && clean.split(/\s+/).length <= 5) {
+    const s = enMatch3[1].trim();
+    if (s.length > 2 && !/^(?:what|where|how|who|why|profile|dp)$/i.test(s)) {
+      return { isImageRequest: true, prompt: sanitizePrompt(s) };
+    }
   }
 
   return { isImageRequest: false, prompt: null };
+}
+
+/**
+ * Normalizes and formats the raw user subject into a rich prompt suitable for diffusion models
+ */
+function sanitizePrompt(raw) {
+  if (!raw) return 'a beautiful scene, photorealistic, 4k';
+  let cleaned = raw
+    .replace(/^(?:ek\s+|a\s+|an\s+|the\s+|some\s+|please\s+|bhai\s+|yaar\s+)+/gi, '')
+    .replace(/(?:\s+(?:ki|ka|ke|banao|banado|bana\s*do|bhejo|dikhao|send\s*karo|please|chahiye))+$/gi, '')
+    .trim();
+
+  // Basic dictionary map for common Hindi/Hinglish nouns
+  const hindiToEng = {
+    billi: 'cat',
+    kutta: 'dog',
+    sher: 'lion',
+    haathi: 'elephant',
+    hathi: 'elephant',
+    ghoda: 'horse',
+    gaadi: 'car',
+    gadi: 'car',
+    phool: 'flower',
+    gulab: 'red rose',
+    ladka: 'young boy',
+    ladki: 'young girl',
+    pahad: 'mountains',
+    samundar: 'ocean',
+  };
+
+  const lower = cleaned.toLowerCase();
+  if (hindiToEng[lower]) {
+    cleaned = hindiToEng[lower];
+  }
+
+  // If prompt is short (1-3 words), enhance with photorealistic qualities
+  if (cleaned.split(/\s+/).length <= 3) {
+    return `${cleaned}, photorealistic, high quality, 4k, detailed, professional lighting`;
+  }
+
+  return cleaned;
 }
 
 /**
