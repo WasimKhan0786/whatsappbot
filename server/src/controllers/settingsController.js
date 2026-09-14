@@ -6,7 +6,7 @@ const RoutineTemplate = require('../models/RoutineTemplate');
 const { generateGeminiReply } = require('../services/geminiService');
 const { sendWhatsAppMessage } = require('../services/whatsappService');
 const { classifyMessage } = require('../services/messageRoutingService');
-const { detectProfanity } = require('../services/profanityService');
+const { detectProfanity, handleProfanityStrike } = require('../services/profanityService');
 const { extractImagePrompt, generateHuggingFaceImage } = require('../services/huggingFaceService');
 const { buildDynamicPersonaPrompt } = require('../services/personaService');
 const {
@@ -594,16 +594,16 @@ const simulateIncoming = async (req, res) => {
       }
     }
 
-    // 🛑 PROFANITY & ABUSE DETECTION INTERCEPT (Owner-Predefined Reply)
+    // 🛑 PROFANITY & ABUSE DETECTION INTERCEPT (Owner-Predefined Reply & Strikes)
     const isProfanityFilterActive = settings.profanityFilterEnabled ?? true;
     if (!replyText && isProfanityFilterActive) {
       const profanityResult = detectProfanity(messageText, settings.customProfanityKeywords || []);
       if (profanityResult.hasProfanity) {
-        console.log(`🛑 [Simulate] ABUSE / PROFANITY DETECTED (Word: "${profanityResult.detectedWord}"). Intercepting and bypassing Gemini AI.`);
-        replyText = settings.profanityReplyMessage ||
-          'Kripya sabhya bhasha ka prayog karein. Hum yahan aadar aur maryada ke saath baat karne ke liye upasthit hain. Please maintain respectful communication.';
+        const strikeInfo = handleProfanityStrike(senderPhone || 'simulator', profanityResult.detectedWord, settings);
+        console.log(`🛑 [Simulate] ABUSE / PROFANITY DETECTED (Word: "${profanityResult.detectedWord}", Strike: ${strikeInfo.strike}, Action: ${strikeInfo.action}).`);
+        replyText = strikeInfo.replyText;
         routingCategory = 'PROFANITY';
-        routingIntent = `BLOCKED_PROFANITY_${profanityResult.detectedWord?.toUpperCase() || 'ABUSE'}`;
+        routingIntent = strikeInfo.strike === 1 ? 'PROFANITY_FIRST_WARNING' : `PROFANITY_RETALIATION_STRIKE_${strikeInfo.strike}`;
       }
     }
 

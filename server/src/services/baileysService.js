@@ -36,7 +36,7 @@ const {
   buildLocationTextMessage,
 } = require('./locationService');
 const { classifyMessage } = require('./messageRoutingService');
-const { detectProfanity } = require('./profanityService');
+const { detectProfanity, handleProfanityStrike } = require('./profanityService');
 const { extractImagePrompt, generateHuggingFaceImage } = require('./huggingFaceService');
 const { recordOwnerActivity, checkOwnerInactivityStatus } = require('./inactivityTimerService');
 const {
@@ -700,11 +700,11 @@ async function initBaileys(forceRestart = false) {
           if (!replyText && isProfanityFilterActive) {
             const profanityResult = detectProfanity(messageText, settings.customProfanityKeywords || []);
             if (profanityResult.hasProfanity) {
-              console.log(`[Baileys] 🛑 ABUSE / PROFANITY DETECTED from ${senderPhone} (Word: "${profanityResult.detectedWord}"). Intercepting and bypassing Gemini AI.`);
-              replyText = settings.profanityReplyMessage ||
-                'Kripya sabhya bhasha ka prayog karein. Hum yahan aadar aur maryada ke saath baat karne ke liye upasthit hain. Please maintain respectful communication.';
+              const strikeInfo = handleProfanityStrike(senderPhone, profanityResult.detectedWord, settings);
+              console.log(`[Baileys] 🛑 ABUSE / PROFANITY DETECTED from ${senderPhone} (Word: "${profanityResult.detectedWord}", Strike: ${strikeInfo.strike}, Action: ${strikeInfo.action}). Intercepting.`);
+              replyText = strikeInfo.replyText;
               routingCategory = 'PROFANITY';
-              routingIntent = `BLOCKED_PROFANITY_${profanityResult.detectedWord?.toUpperCase() || 'ABUSE'}`;
+              routingIntent = strikeInfo.strike === 1 ? 'PROFANITY_FIRST_WARNING' : `PROFANITY_RETALIATION_STRIKE_${strikeInfo.strike}`;
             }
           }
 

@@ -164,9 +164,14 @@ function detectProfanity(messageText, customKeywords = []) {
 
   const matchedWords = new Set();
 
+  const combinedKeywords = [
+    ...(Array.isArray(customKeywords) ? customKeywords : []),
+    ...(Array.isArray(ADDITIONAL_TRIGGER_WORDS) ? ADDITIONAL_TRIGGER_WORDS : []),
+  ];
+
   // 1. Check custom owner keywords first (exact word boundaries or direct includes)
-  if (Array.isArray(customKeywords)) {
-    for (const rawKw of customKeywords) {
+  if (combinedKeywords.length > 0) {
+    for (const rawKw of combinedKeywords) {
       if (!rawKw || typeof rawKw !== 'string') continue;
       const kw = rawKw.trim().toLowerCase();
       if (!kw) continue;
@@ -217,12 +222,85 @@ function detectProfanity(messageText, customKeywords = []) {
   };
 }
 
+const {
+  WARNING_MESSAGE,
+  CUSTOM_RETALIATION_REPLIES,
+  ADDITIONAL_TRIGGER_WORDS,
+} = require('../config/customResponses');
+
+// User strike tracker: key = sender (phone or ID)
+const userStrikes = new Map();
+
+/**
+ * Handles user profanity strike count and resolves the appropriate reply:
+ * Strike 1: Warning
+ * Strike 2+: Retaliation from customResponses
+ *
+ * @param {string} senderId - Phone number or unique ID of the sender
+ * @param {string} detectedWord - The abusive word that triggered the check
+ * @param {object} settings - BotSettings object (optional overrides)
+ * @returns {{ strike: number, replyText: string, action: 'WARNING' | 'RETALIATION' }}
+ */
+function handleProfanityStrike(senderId, detectedWord, settings = {}) {
+  const key = senderId ? String(senderId).trim() : 'anonymous';
+  const current = userStrikes.get(key) || { count: 0, lastStrikeAt: 0 };
+  const newCount = current.count + 1;
+  userStrikes.set(key, { count: newCount, lastStrikeAt: Date.now() });
+
+  if (newCount === 1) {
+    // Strike 1: Warning Message
+    const warning =
+      settings.profanityReplyMessage ||
+      WARNING_MESSAGE ||
+      '⚠️ *Aakhri Chetwani (Last Warning):* Kripya ashabhya ya galat bhasha ka istemal na karein. Yeh aakhri warning hai!';
+    return {
+      strike: 1,
+      replyText: warning,
+      action: 'WARNING',
+    };
+  }
+
+  // Strike 2+: Custom Retaliation Message
+  let retaliationText = '';
+  if (Array.isArray(CUSTOM_RETALIATION_REPLIES) && CUSTOM_RETALIATION_REPLIES.length > 0) {
+    const randomIndex = Math.floor(Math.random() * CUSTOM_RETALIATION_REPLIES.length);
+    retaliationText = CUSTOM_RETALIATION_REPLIES[randomIndex];
+  }
+
+  // Fallback if user hasn't filled custom responses yet
+  if (!retaliationText || typeof retaliationText !== 'string' || !retaliationText.trim()) {
+    retaliationText = `⚠️ Warning ke baad bhi ashabhya bhasha ka upyog kiya gaya (Strike ${newCount})!`;
+  }
+
+  return {
+    strike: newCount,
+    replyText: retaliationText,
+    action: 'RETALIATION',
+  };
+}
+
+function getUserStrikes(senderId) {
+  const key = senderId ? String(senderId).trim() : 'anonymous';
+  return userStrikes.get(key)?.count || 0;
+}
+
+function resetUserStrikes(senderId) {
+  if (senderId) {
+    userStrikes.delete(String(senderId).trim());
+  } else {
+    userStrikes.clear();
+  }
+}
+
 function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 module.exports = {
   detectProfanity,
+  handleProfanityStrike,
+  getUserStrikes,
+  resetUserStrikes,
   normalizeForProfanityCheck,
   HINGLISH_ABUSIVE_TERMS,
   ENGLISH_ABUSIVE_TERMS,
