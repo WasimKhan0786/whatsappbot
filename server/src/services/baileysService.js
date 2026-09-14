@@ -1196,8 +1196,8 @@ async function initBaileys(forceRestart = false) {
               if (voiceRes.success && voiceRes.audioBuffer) {
                 await sock.sendMessage(senderJid, {
                   audio: voiceRes.audioBuffer,
-                  mimetype: 'audio/mp4',
-                  ptt: true,
+                  mimetype: voiceRes.mimetype || 'audio/ogg; codecs=opus',
+                  ptt: voiceRes.ptt !== false,
                 });
                 console.log(`[Anti-Ban Shield] 🎙️ Native WhatsApp Voice Note delivered to ${senderPhone} (${voiceRes.provider})`);
                 voiceDelivered = true;

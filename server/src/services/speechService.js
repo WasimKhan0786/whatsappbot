@@ -1,8 +1,70 @@
 const axios = require('axios');
+const { spawn } = require('child_process');
+
+let ffmpegPath = null;
+try {
+  ffmpegPath = require('ffmpeg-static');
+} catch (e) {
+  try {
+    ffmpegPath = require('c:/Users/wasim/OneDrive/Desktop/whatsapp automaed/node_modules/ffmpeg-static/index.js');
+  } catch (e2) {}
+}
 
 const DEEPGRAM_API_URL = 'https://api.deepgram.com/v1/listen';
 const MURF_API_URL = 'https://api.murf.ai/v1/speech/generate';
 const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1/text-to-speech';
+
+/**
+ * Transcodes audio buffer into WhatsApp-compliant Opus OGG container ('audio/ogg; codecs=opus')
+ * WhatsApp strictly requires an OGG container with OpusHead headers for Push-to-Talk (PTT) voice notes.
+ * Without this, WhatsApp displays: "This audio is not available because something is wrong with the audio".
+ *
+ * @param {Buffer} inputBuffer - Source MP3 / WAV audio buffer
+ * @returns {Promise<Buffer>} - Transcoded Opus OGG buffer
+ */
+async function convertAudioToWhatsAppOpus(inputBuffer) {
+  if (!ffmpegPath || !inputBuffer || inputBuffer.length === 0) {
+    return inputBuffer;
+  }
+
+  return new Promise((resolve) => {
+    try {
+      const ffmpeg = spawn(ffmpegPath, [
+        '-i', 'pipe:0',
+        '-c:a', 'libopus',
+        '-b:a', '32k',
+        '-ar', '48000',
+        '-ac', '1',
+        '-f', 'ogg',
+        'pipe:1',
+      ]);
+
+      const chunks = [];
+      ffmpeg.stdout.on('data', (chunk) => chunks.push(chunk));
+      ffmpeg.stderr.on('data', () => {}); // ignore ffmpeg progress logs
+      ffmpeg.on('close', (code) => {
+        if (code === 0 && chunks.length > 0) {
+          const result = Buffer.concat(chunks);
+          console.log(`[Speech AI] 🎵 Transcoded audio to WhatsApp Opus OGG (${result.length} bytes)`);
+          resolve(result);
+        } else {
+          console.warn(`[Speech AI] ffmpeg exited with code ${code}, retaining original buffer`);
+          resolve(inputBuffer);
+        }
+      });
+      ffmpeg.on('error', (err) => {
+        console.warn(`[Speech AI] ffmpeg spawn error: ${err.message}, retaining original buffer`);
+        resolve(inputBuffer);
+      });
+
+      ffmpeg.stdin.write(inputBuffer);
+      ffmpeg.stdin.end();
+    } catch (err) {
+      console.warn(`[Speech AI] Opus conversion error: ${err.message}`);
+      resolve(inputBuffer);
+    }
+  });
+}
 
 /**
  * Transcribes an incoming WhatsApp voice note or audio buffer using Deepgram Nova-2
@@ -19,7 +81,6 @@ async function transcribeAudioWithDeepgram(audioBuffer, mimeType = 'audio/ogg') 
   try {
     console.log(`[Speech AI] 🎙️ Transcribing incoming audio via Deepgram Nova-2 (${audioBuffer.length} bytes, ${mimeType})...`);
 
-    // Clean mimetype for Deepgram header
     const cleanMime = (mimeType || 'audio/ogg').split(';')[0].trim();
 
     const response = await axios.post(
@@ -53,20 +114,23 @@ async function transcribeAudioWithDeepgram(audioBuffer, mimeType = 'audio/ogg') 
 }
 
 /**
- * Generates an ultra-realistic voice note from text using Murf AI (primary) or ElevenLabs (fallback)
+ * Generates an ultra-realistic voice note from text using Murf AI (primary) or ElevenLabs (fallback),
+ * and transcodes it into pure WhatsApp-compliant Opus OGG format so WhatsApp can play it cleanly.
+ *
  * @param {string} text - Text to speak
  * @param {object} [options]
  * @param {string} [options.voiceId] - Voice identifier
  * @param {string} [options.style] - Tone / persona
- * @returns {Promise<{ success: boolean, audioBuffer: Buffer|null, audioUrl: string|null, provider: string }>}
+ * @returns {Promise<{ success: boolean, audioBuffer: Buffer|null, mimetype: string, ptt: boolean, provider: string }>}
  */
 async function synthesizeVoiceNote(text, options = {}) {
   if (!text || typeof text !== 'string' || text.trim() === '') {
-    return { success: false, audioBuffer: null, audioUrl: null, provider: 'none' };
+    return { success: false, audioBuffer: null, mimetype: 'audio/ogg; codecs=opus', ptt: false, provider: 'none' };
   }
 
-  // Sanitize text: remove markdown asterisks, emojis, and bracketed tags for natural speech
+  // Sanitize text: remove markdown asterisks, emojis, URLs, and bracketed tags for natural speech
   const cleanText = text
+    .replace(/https?:\/\/[^\s]+/gi, '')
     .replace(/\*([^*]+)\*/g, '$1')
     .replace(/\[[^\]]+\]/g, '')
     .replace(/[\u{1F600}-\u{1F6FF}|[\u{2600}-\u{26FF}]/gu, '')
@@ -74,7 +138,7 @@ async function synthesizeVoiceNote(text, options = {}) {
     .substring(0, 800);
 
   if (!cleanText) {
-    return { success: false, audioBuffer: null, audioUrl: null, provider: 'none' };
+    return { success: false, audioBuffer: null, mimetype: 'audio/ogg; codecs=opus', ptt: false, provider: 'none' };
   }
 
   const murfKey = process.env.MURF_API_KEY;
@@ -84,7 +148,7 @@ async function synthesizeVoiceNote(text, options = {}) {
   if (murfKey && !murfKey.includes('your_')) {
     try {
       console.log(`[Speech AI] 🗣️ Synthesizing Voice Note via Murf AI...`);
-      const selectedVoice = options.voiceId || 'hi-IN-kabir'; // Natural Hindi/Indian voice
+      const selectedVoice = options.voiceId || 'hi-IN-kabir'; // Authentic Indian Hindi/English voice
 
       const response = await axios.post(
         MURF_API_URL,
@@ -105,15 +169,19 @@ async function synthesizeVoiceNote(text, options = {}) {
 
       const audioUrl = response.data?.audioFile;
       if (audioUrl) {
-        // Download audio file to buffer for WhatsApp PTT delivery
         const audioDownload = await axios.get(audioUrl, { responseType: 'arraybuffer', timeout: 15000 });
-        const audioBuffer = Buffer.from(audioDownload.data);
+        const rawBuffer = Buffer.from(audioDownload.data);
 
-        console.log(`[Speech AI] ✅ Voice Note synthesized via Murf AI (${audioBuffer.length} bytes)`);
+        // Transcode to WhatsApp-compliant Opus OGG
+        const opusBuffer = await convertAudioToWhatsAppOpus(rawBuffer);
+        const isOpus = opusBuffer.toString('binary').includes('OpusHead');
+
+        console.log(`[Speech AI] ✅ Voice Note ready for WhatsApp [Opus: ${isOpus}] (${opusBuffer.length} bytes)`);
         return {
           success: true,
-          audioBuffer,
-          audioUrl,
+          audioBuffer: opusBuffer,
+          mimetype: isOpus ? 'audio/ogg; codecs=opus' : 'audio/mpeg',
+          ptt: isOpus,
           provider: 'MURF_AI',
         };
       }
@@ -126,7 +194,7 @@ async function synthesizeVoiceNote(text, options = {}) {
   if (elevenKey && !elevenKey.includes('your_')) {
     try {
       console.log(`[Speech AI] 🗣️ Attempting ElevenLabs Voice Note fallback...`);
-      const voiceId = options.voiceId || '21m00Tcm4TlvDq8ikWAM'; // Default Rachel voice
+      const voiceId = options.voiceId || '21m00Tcm4TlvDq8ikWAM';
       const response = await axios.post(
         `${ELEVENLABS_API_URL}/${voiceId}`,
         {
@@ -145,12 +213,16 @@ async function synthesizeVoiceNote(text, options = {}) {
         }
       );
 
-      const audioBuffer = Buffer.from(response.data);
-      console.log(`[Speech AI] ✅ Voice Note synthesized via ElevenLabs (${audioBuffer.length} bytes)`);
+      const rawBuffer = Buffer.from(response.data);
+      const opusBuffer = await convertAudioToWhatsAppOpus(rawBuffer);
+      const isOpus = opusBuffer.toString('binary').includes('OpusHead');
+
+      console.log(`[Speech AI] ✅ Voice Note synthesized via ElevenLabs [Opus: ${isOpus}] (${opusBuffer.length} bytes)`);
       return {
         success: true,
-        audioBuffer,
-        audioUrl: null,
+        audioBuffer: opusBuffer,
+        mimetype: isOpus ? 'audio/ogg; codecs=opus' : 'audio/mpeg',
+        ptt: isOpus,
         provider: 'ELEVENLABS',
       };
     } catch (elevenErr) {
@@ -158,7 +230,7 @@ async function synthesizeVoiceNote(text, options = {}) {
     }
   }
 
-  return { success: false, audioBuffer: null, audioUrl: null, provider: 'none' };
+  return { success: false, audioBuffer: null, mimetype: 'audio/ogg; codecs=opus', ptt: false, provider: 'none' };
 }
 
 /**
@@ -182,5 +254,6 @@ function shouldReplyWithVoice(text = '', isIncomingVoiceNote = false) {
 module.exports = {
   transcribeAudioWithDeepgram,
   synthesizeVoiceNote,
+  convertAudioToWhatsAppOpus,
   shouldReplyWithVoice,
 };
