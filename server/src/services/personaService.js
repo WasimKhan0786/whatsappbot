@@ -441,19 +441,19 @@ function buildDynamicPersonaPrompt(baseSystemPrompt, contact, senderPhone, incom
       .replace(/Only respond to messages originating from numbers listed in the whitelist filter\.\s*For any message from an unlisted number,?\s*silently ignore it and do not dispatch any replies\.\n*/gi, '');
   }
 
-  const persona = (isAutoReplyAll && !contact)
-    ? PERSONA_CONFIGS.RESPECTFUL
+  const persona = isAutoReplyAll
+    ? PERSONA_CONFIGS.PROFESSIONAL
     : resolveContactPersona(contact);
   const contactName = contact?.name ? `"${contact.name}"` : (contact?.relationship ? `"${contact.relationship}"` : 'this contact');
-  const relationship = contact?.relationship || (isAutoReplyAll ? 'Community Contact' : 'Friend');
-  const customInstructions = contact?.customToneInstructions?.trim() || '';
+  const relationship = isAutoReplyAll ? 'Professional Contact' : (contact?.relationship || 'Friend');
+  const customInstructions = isAutoReplyAll ? '' : (contact?.customToneInstructions?.trim() || '');
 
   // Analyze incoming message style for real-time mirroring
   const styleAnalysis = analyzeIncomingMessageStyle(incomingMessage);
 
-  // Check if contact has a custom analyzed chat style profile
+  // Check if contact has a custom analyzed chat style profile (ignored when global Auto-Reply All is active)
   const style = contact?.styleProfile;
-  const hasLearnedStyle = Boolean(style && style.hasCustomStyle && (style.stylePromptDirective || style.tone));
+  const hasLearnedStyle = !isAutoReplyAll && Boolean(style && style.hasCustomStyle && (style.stylePromptDirective || style.tone));
 
   let personaDirective = '';
 
@@ -589,23 +589,33 @@ CORE MIRRORING MANDATE:
 
 `;
 
-  // Global Auto-Reply All: Respectful, Polite & Peaceful Tone Mandate
+  // Global Auto-Reply All: Professional, Zero-Kinship & Confrontational Anti-Abuse Mandate
   let autoReplyAllDirective = '';
   if (isAutoReplyAll) {
     autoReplyAllDirective = `
 ======================================================
-[GLOBAL AUTO-REPLY ALL: MANDATORY RESPECTFUL, POLITE & PEACEFUL TONE DIRECTIVE]
-Global Auto-Reply All is currently ENABLED. You are responding on behalf of the user to every incoming WhatsApp message.
+[GLOBAL AUTO-REPLY ALL: MANDATORY PROFESSIONAL & ZERO-KINSHIP DIRECTIVE]
+Global Auto-Reply All is currently ENABLED. You are communicating on behalf of the user to every incoming WhatsApp message.
+
 MANDATORY UNIVERSAL BEHAVIORAL DIRECTIVES:
-1. RESPECTFUL & COURTEOUS CONDUCT:
-   - Maintain an exceptionally respectful, polite, calm, and courteous tone for every conversation without exception.
-   - Treat every sender with warmth, dignity, and gracious hospitality. Use polite honorifics and respectful pronouns (such as "Aap", "Ji", or courteous, professional English/Hinglish phrasing).
-2. PEACEFUL & HARMONIOUS INTERACTIONS:
-   - Ensure every reply promotes peace, kindness, positivity, and mutual understanding.
-   - Under no circumstances use rude, dismissive, arrogant, sarcastic, offensive, or argumentative language.
-   - If an incoming message is hostile, impatient, provocative, or upset, respond with serene composure, gentle empathy, and tranquil politeness to de-escalate peacefully.
-3. CONSTRUCTIVE & HELPFUL REPLIES:
-   - Provide clear, well-mannered, and helpful assistance while maintaining natural human warmth and peaceful dignity.
+1. PROFESSIONAL, RESPECTFUL & POLITE CONDUCT:
+   - For all standard, normal, and non-abusive messages, you MUST communicate in an exceptionally professional, respectful, polite, and dignified manner with all users.
+   - Maintain a courteous and helpful register. Use polite honorifics and respectful pronouns (such as "Aap", "Ji", or formal courteous English/Hinglish).
+   - Provide clear, well-mannered, and helpful assistance.
+
+2. STRICT ZERO-KINSHIP & NO-RELATIONSHIP TERMS POLICY (CRITICAL & ABSOLUTE):
+   - You MUST STRICTLY AVOID kinship or relationship terms like 'brother' or 'sister' in EVERY response without exception.
+   - NEVER use the following terms under any circumstance:
+     * English: "brother", "sister", "bro", "bros", "sis", "friend", "buddy", "mate", "cousin", "family".
+     * Hindi / Urdu / Hinglish: "bhai", "bhaiya", "bhaijaan", "bhaisahab", "behen", "didi", "yaar", "dost", "bhabhi", "bawa", "beta", "chacha", "mama", "meri jaan", "jaan".
+   - Address the sender professionally by name or neutrally/respectfully ("Aap", "Ji", "Sir", "Ma'am") without implying any personal kinship or informal relationship.
+
+3. CONFRONTATIONAL AGGRESSION-MATCHING FOR ABUSIVE / OFFENSIVE MESSAGES:
+   - IF an incoming message contains abusive, offensive, insulting, profane, disrespectful, toxic, or vulgar language:
+     * DO NOT act polite, timid, apologetic, or peaceful.
+     * You MUST respond FIRMLY and CONFRONTATIONAL to match the aggression and put the sender in their place immediately.
+     * Deliver a sharp, fearless, and assertive reprimand that commands authority and directly challenges their insolence (e.g., "Aukat mein reh kar baat karo, samjhe?", "Zabaan sambhal kar baat karna seekho pehle. Aisi bakwas yahan bilkul nahi chalegi.", "Mind your language and step back immediately.").
+     * STILL STRICTLY ZERO-KINSHIP: Even while being confrontational, you must STILL STRICTLY AVOID any kinship or relationship terms. NEVER use words like "bhai", "bro", "behen", "bhenchod", "bhaiya", "yaar", or any family-referencing terms. Challenge and confront them directly without kinship words.
 ======================================================
 `;
   }
@@ -637,6 +647,46 @@ MANDATORY UNIVERSAL BEHAVIORAL DIRECTIVES:
     .trim();
 }
 
+/**
+ * Strips all kinship and informal relationship terms (brother, sister, bhai, bro, behen, etc.)
+ * from text when Global Auto-Reply All is active.
+ *
+ * @param {string} text - Message text to sanitize
+ * @returns {string} - Cleaned text free of kinship terms
+ */
+function stripKinshipTerms(text) {
+  if (!text || typeof text !== 'string') return text;
+
+  let cleaned = text;
+
+  const kinshipReplacements = [
+    { pattern: /\b(?:arre|arey)\s+(?:bhai|bhaiya|bhaijaan|bhaisahab|bro|yaar|dost|behen|didi|bhabhi)\b/gi, replacement: 'Dekhiye,' },
+    { pattern: /\b(?:haanji|haan)\s+(?:bhai|bhaiya|bhaijaan|bhaisahab|bro|yaar|dost|behen|didi|bhabhi)\b/gi, replacement: 'Haanji,' },
+    { pattern: /\b(?:sun|suno)\s+(?:na\s+)?(?:bhai|bhaiya|bhaijaan|bhaisahab|bro|yaar|dost|behen|didi|bhabhi)\b/gi, replacement: 'Suniye,' },
+    { pattern: /\b(?:bol|bolo|bata|batao)\s+(?:na\s+)?(?:bhai|bhaiya|bhaijaan|bhaisahab|bro|yaar|dost|behen|didi|bhabhi)\b/gi, replacement: 'Bataiye,' },
+    { pattern: /\b(?:thanks|thank\s*you|shukriya|dhanyawad)\s+(?:bhai|bhaiya|bhaijaan|bhaisahab|bro|yaar|dost|behen|didi|bhabhi)\b/gi, replacement: 'Dhanyawad!' },
+    { pattern: /\b(?:bye|good\s*night|alvida|tata)\s+(?:bhai|bhaiya|bhaijaan|bhaisahab|bro|yaar|dost|behen|didi|bhabhi)\b/gi, replacement: 'Alvida!' },
+    { pattern: /\b(?:bhai\s*jaan|bhaiya\s*ji|bhabhi\s*ji|bhai\s*sahab)\b/gi, replacement: '' },
+    { pattern: /\b(?:bhai|bhaiya|bhaisahab|behen|didi|bhabhi|bawa)\b/gi, replacement: '' },
+    { pattern: /\b(?:brother|sister|bro|bros|sis|brotherly|sisterly)\b/gi, replacement: '' },
+    { pattern: /\b(?:yaar|yaara|dost)\b/gi, replacement: '' },
+    { pattern: /\b(?:meri\s+jaan|jaan)\b/gi, replacement: '' },
+    { pattern: /\b(?:bhen\s*chod|behen\s*chod|bhenchod|behenchod)\b/gi, replacement: 'badtameez' },
+  ];
+
+  for (const { pattern, replacement } of kinshipReplacements) {
+    cleaned = cleaned.replace(pattern, replacement);
+  }
+
+  return cleaned
+    .replace(/,\s*([!?.])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+,/g, ',')
+    .replace(/,\s*,+/g, ',')
+    .replace(/^[,\s!]+/, '')
+    .trim();
+}
+
 module.exports = {
   PERSONA_CONFIGS,
   SHAYARI_CATEGORIES,
@@ -645,6 +695,7 @@ module.exports = {
   analyzeIncomingMessageStyle,
   detectShayariRequest,
   buildDynamicPersonaPrompt,
+  stripKinshipTerms,
 };
 
 

@@ -8,7 +8,7 @@ const { sendWhatsAppMessage } = require('../services/whatsappService');
 const { classifyMessage } = require('../services/messageRoutingService');
 const { detectProfanity, handleProfanityStrike } = require('../services/profanityService');
 const { extractImagePrompt, generateHuggingFaceImage } = require('../services/huggingFaceService');
-const { buildDynamicPersonaPrompt } = require('../services/personaService');
+const { buildDynamicPersonaPrompt, stripKinshipTerms } = require('../services/personaService');
 const {
   getGeminiChatHistory,
   recordMessageExchange,
@@ -599,7 +599,7 @@ const simulateIncoming = async (req, res) => {
     if (!replyText && isProfanityFilterActive) {
       const profanityResult = detectProfanity(messageText, settings.customProfanityKeywords || []);
       if (profanityResult.hasProfanity) {
-        const strikeInfo = handleProfanityStrike(senderPhone || 'simulator', profanityResult.detectedWord, settings);
+        const strikeInfo = handleProfanityStrike(senderPhone || 'simulator', profanityResult.detectedWord, settings, isAutoReplyAll);
         console.log(`🛑 [Simulate] ABUSE / PROFANITY DETECTED (Word: "${profanityResult.detectedWord}", Strike: ${strikeInfo.strike}, Action: ${strikeInfo.action}).`);
         replyText = strikeInfo.replyText;
         routingCategory = 'PROFANITY';
@@ -609,7 +609,7 @@ const simulateIncoming = async (req, res) => {
 
     if (!replyText) {
       try {
-        classificationResult = await classifyMessage(messageText, matchedContact);
+        classificationResult = await classifyMessage(messageText, matchedContact, isAutoReplyAll);
         if (classificationResult.category === 'ROUTINE' && classificationResult.templateReply) {
           replyText = classificationResult.templateReply;
           routingCategory = 'ROUTINE';
@@ -682,6 +682,11 @@ const simulateIncoming = async (req, res) => {
           });
         }
       }
+    }
+
+    // Strictly sanitize kinship terms when Global Auto-Reply All is active
+    if (isAutoReplyAll && replyText) {
+      replyText = stripKinshipTerms(replyText);
     }
 
     // 4. WhatsApp Send (or simulation)

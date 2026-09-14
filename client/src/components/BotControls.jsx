@@ -93,6 +93,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
 
   const [isEditingPhone, setIsEditingPhone] = useState(false);
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
+  const [isEditingInactivity, setIsEditingInactivity] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [resettingAll, setResettingAll] = useState(false);
   const [resetAllSuccess, setResetAllSuccess] = useState(false);
@@ -130,7 +131,9 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
         settings.imageGenerationNotice || '🎨 Generating your requested image with FLUX AI... Please hold on a moment! ⏳'
       );
       setOwnerInactivityTimerEnabled(settings.ownerInactivityTimerEnabled ?? true);
-      setOwnerInactivityDurationMinutes(settings.ownerInactivityDurationMinutes ?? 15);
+      if (!isEditingInactivity) {
+        setOwnerInactivityDurationMinutes(settings.ownerInactivityDurationMinutes ?? 15);
+      }
       setOwnerInactivityScope(settings.ownerInactivityScope || 'PER_CHAT');
       setNewsEnabled(settings.newsEnabled ?? true);
       setNewsDefaultCountry(settings.newsDefaultCountry || 'in');
@@ -145,7 +148,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
         setPrompt(settings.systemPrompt || '');
       }
     }
-  }, [settings, isEditingPhone, isEditingPrompt]);
+  }, [settings, isEditingPhone, isEditingPrompt, isEditingInactivity]);
 
   // Fetch active inactivity sessions
   const fetchActiveInactivitySessions = async () => {
@@ -332,6 +335,72 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
     });
   };
 
+  // Instant Owner Inactivity Duration change handler
+  const handleInactivityDurationChange = async (mins) => {
+    const num = Math.max(1, Number(mins) || 15);
+    setOwnerInactivityDurationMinutes(num);
+    setIsEditingInactivity(false);
+    await onUpdateSettings({
+      isEnabled,
+      autoReplyAll,
+      allowedPhoneNumber: phoneNumber,
+      systemPrompt: prompt,
+      humanSimulationEnabled,
+      minReadingDelayMs,
+      maxReadingDelayMs,
+      typingSpeedCPM,
+      defaultMaxMessagesPerContact: Number(defaultMaxMessagesPerContact),
+      limitReachedClosingMessage,
+      dailySessionStrategy,
+      dailyArchiveRetentionDays: Number(dailyArchiveRetentionDays),
+      profanityFilterEnabled,
+      profanityReplyMessage,
+      customProfanityKeywords: customProfanityKeywords.split(',').map(k => k.trim()).filter(Boolean),
+      imageGenerationEnabled,
+      imageGenerationModel,
+      imageGenerationNotice,
+      ownerInactivityTimerEnabled,
+      ownerInactivityDurationMinutes: num,
+      ownerInactivityScope,
+      newsEnabled,
+      newsDefaultCountry,
+      newsDefaultLanguage,
+      newsMaxArticles: Number(newsMaxArticles),
+    });
+  };
+
+  // Instant Owner Inactivity Scope change handler
+  const handleInactivityScopeChange = async (scope) => {
+    setOwnerInactivityScope(scope);
+    await onUpdateSettings({
+      isEnabled,
+      autoReplyAll,
+      allowedPhoneNumber: phoneNumber,
+      systemPrompt: prompt,
+      humanSimulationEnabled,
+      minReadingDelayMs,
+      maxReadingDelayMs,
+      typingSpeedCPM,
+      defaultMaxMessagesPerContact: Number(defaultMaxMessagesPerContact),
+      limitReachedClosingMessage,
+      dailySessionStrategy,
+      dailyArchiveRetentionDays: Number(dailyArchiveRetentionDays),
+      profanityFilterEnabled,
+      profanityReplyMessage,
+      customProfanityKeywords: customProfanityKeywords.split(',').map(k => k.trim()).filter(Boolean),
+      imageGenerationEnabled,
+      imageGenerationModel,
+      imageGenerationNotice,
+      ownerInactivityTimerEnabled,
+      ownerInactivityDurationMinutes: Math.max(1, Number(ownerInactivityDurationMinutes) || 15),
+      ownerInactivityScope: scope,
+      newsEnabled,
+      newsDefaultCountry,
+      newsDefaultLanguage,
+      newsMaxArticles: Number(newsMaxArticles),
+    });
+  };
+
   // Instant Real-Time News toggle handler
   const handleNewsToggle = async () => {
     const nextNewsState = !newsEnabled;
@@ -452,7 +521,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       imageGenerationModel,
       imageGenerationNotice,
       ownerInactivityTimerEnabled,
-      ownerInactivityDurationMinutes: Number(ownerInactivityDurationMinutes),
+      ownerInactivityDurationMinutes: Math.max(1, Number(ownerInactivityDurationMinutes) || 15),
       ownerInactivityScope,
       newsEnabled,
       newsDefaultCountry,
@@ -1616,24 +1685,94 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
               Inactivity Duration (Auto-Resume After Owner Inactivity):
             </label>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {[5, 10, 15, 30, 60].map((mins) => (
+              {[1, 2, 5, 10, 15, 30, 60].map((mins) => (
                 <button
                   key={mins}
                   type="button"
-                  className={`chip-btn ${ownerInactivityDurationMinutes === mins ? 'active' : ''}`}
+                  className={`chip-btn ${Number(ownerInactivityDurationMinutes) === mins ? 'active' : ''}`}
                   style={{
                     padding: '6px 12px',
                     fontSize: '0.8rem',
-                    fontWeight: ownerInactivityDurationMinutes === mins ? 600 : 400,
-                    borderColor: ownerInactivityDurationMinutes === mins ? '#f59e0b' : undefined,
-                    color: ownerInactivityDurationMinutes === mins ? '#fbbf24' : undefined,
-                    background: ownerInactivityDurationMinutes === mins ? 'rgba(245, 158, 11, 0.15)' : undefined,
+                    fontWeight: Number(ownerInactivityDurationMinutes) === mins ? 600 : 400,
+                    borderColor: Number(ownerInactivityDurationMinutes) === mins ? '#f59e0b' : undefined,
+                    color: Number(ownerInactivityDurationMinutes) === mins ? '#fbbf24' : undefined,
+                    background: Number(ownerInactivityDurationMinutes) === mins ? 'rgba(245, 158, 11, 0.15)' : undefined,
                   }}
-                  onClick={() => setOwnerInactivityDurationMinutes(mins)}
+                  onClick={() => handleInactivityDurationChange(mins)}
                 >
-                  {mins === 15 ? `⚡ ${mins}m (Default)` : `⏱️ ${mins}m`}
+                  {mins === 15 ? `⚡ ${mins}m (Default)` : mins <= 2 ? `⚡ ${mins}m` : `⏱️ ${mins}m`}
                 </button>
               ))}
+            </div>
+
+            {/* Custom Specific Duration Input Field */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Custom Duration:</span>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center', width: 110 }}>
+                <input
+                  id="custom-inactivity-duration-input"
+                  type="number"
+                  min="1"
+                  max="1440"
+                  step="1"
+                  className="text-input"
+                  placeholder="e.g. 3"
+                  value={ownerInactivityDurationMinutes || ''}
+                  onFocus={() => setIsEditingInactivity(true)}
+                  onChange={(e) => {
+                    setIsEditingInactivity(true);
+                    const val = e.target.value;
+                    if (val === '') {
+                      setOwnerInactivityDurationMinutes('');
+                    } else {
+                      const num = parseInt(val, 10);
+                      setOwnerInactivityDurationMinutes(isNaN(num) ? 1 : Math.max(1, num));
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleInactivityDurationChange(ownerInactivityDurationMinutes);
+                    }
+                  }}
+                  onBlur={() => {
+                    const num = Math.max(1, Number(ownerInactivityDurationMinutes) || 15);
+                    setOwnerInactivityDurationMinutes(num);
+                    handleInactivityDurationChange(num);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '5px 30px 5px 10px',
+                    fontSize: '0.82rem',
+                    borderColor: ![1, 2, 5, 10, 15, 30, 60].includes(Number(ownerInactivityDurationMinutes)) && ownerInactivityDurationMinutes ? '#f59e0b' : undefined,
+                    background: ![1, 2, 5, 10, 15, 30, 60].includes(Number(ownerInactivityDurationMinutes)) && ownerInactivityDurationMinutes ? 'rgba(245, 158, 11, 0.12)' : undefined,
+                    color: ![1, 2, 5, 10, 15, 30, 60].includes(Number(ownerInactivityDurationMinutes)) && ownerInactivityDurationMinutes ? '#fbbf24' : undefined,
+                  }}
+                />
+                <span style={{ position: 'absolute', right: 8, fontSize: '0.74rem', color: 'var(--text-muted)', pointerEvents: 'none' }}>
+                  min
+                </span>
+              </div>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{
+                  padding: '5px 10px',
+                  fontSize: '0.76rem',
+                  borderColor: '#f59e0b',
+                  color: '#fbbf24',
+                  background: 'rgba(245, 158, 11, 0.15)',
+                  fontWeight: 600,
+                }}
+                onClick={() => handleInactivityDurationChange(ownerInactivityDurationMinutes)}
+              >
+                Set & Save
+              </button>
+              <span style={{ fontSize: '0.74rem', color: ![1, 2, 5, 10, 15, 30, 60].includes(Number(ownerInactivityDurationMinutes)) && ownerInactivityDurationMinutes ? '#fbbf24' : 'var(--text-muted)' }}>
+                {![1, 2, 5, 10, 15, 30, 60].includes(Number(ownerInactivityDurationMinutes)) && ownerInactivityDurationMinutes
+                  ? `(Custom ${ownerInactivityDurationMinutes} min active)`
+                  : 'or enter any custom minutes'}
+              </span>
             </div>
           </div>
 
@@ -1662,7 +1801,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
                   name="inactivityScope"
                   value="PER_CHAT"
                   checked={ownerInactivityScope === 'PER_CHAT'}
-                  onChange={() => setOwnerInactivityScope('PER_CHAT')}
+                  onChange={() => handleInactivityScopeChange('PER_CHAT')}
                 />
                 <span>Per-Chat (Recommended)</span>
               </label>
@@ -1685,7 +1824,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
                   name="inactivityScope"
                   value="GLOBAL"
                   checked={ownerInactivityScope === 'GLOBAL'}
-                  onChange={() => setOwnerInactivityScope('GLOBAL')}
+                  onChange={() => handleInactivityScopeChange('GLOBAL')}
                 />
                 <span>Global (All Chats)</span>
               </label>

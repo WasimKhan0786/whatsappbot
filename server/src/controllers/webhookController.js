@@ -16,7 +16,7 @@ const {
   incrementSessionMessageCount,
 } = require("../services/chatHistoryService");
 const { processGameTurn } = require("../services/gameService");
-const { buildDynamicPersonaPrompt } = require("../services/personaService");
+const { buildDynamicPersonaPrompt, stripKinshipTerms } = require("../services/personaService");
 const {
   validateTwilioSignature,
   buildTwimlMessageResponse,
@@ -268,7 +268,7 @@ const handleTwilioWebhook = async (req, res) => {
     if (isProfanityFilterActive) {
       const profanityResult = detectProfanity(messageText, settings.customProfanityKeywords || []);
       if (profanityResult.hasProfanity) {
-        const strikeInfo = handleProfanityStrike(sender, profanityResult.detectedWord, settings);
+        const strikeInfo = handleProfanityStrike(sender, profanityResult.detectedWord, settings, isAutoReplyAll);
         console.log(`🛑 [Twilio] ABUSE / PROFANITY DETECTED from ${sender} (Word: "${profanityResult.detectedWord}", Strike: ${strikeInfo.strike}, Action: ${strikeInfo.action}). Intercepting.`);
         replyText = strikeInfo.replyText;
         routingCategory = 'PROFANITY';
@@ -344,7 +344,7 @@ const handleTwilioWebhook = async (req, res) => {
     // 11. Message Classification & Routing (Routine vs Complex)
     if (!replyText) {
       try {
-        const classification = await classifyMessage(messageText, matchedContact);
+        const classification = await classifyMessage(messageText, matchedContact, isAutoReplyAll);
         if (classification.category === 'ROUTINE' && classification.templateReply) {
           console.log(`⚡ [Twilio] Routine inquiry identified: [${classification.intentKey}] -> Predefined template reply.`);
           replyText = classification.templateReply;
@@ -381,6 +381,8 @@ const handleTwilioWebhook = async (req, res) => {
         failResult = await recordFailedAttempt(sender);
         if (failResult.triggeredHandover) {
           replyText = "I apologize, but I am unable to properly resolve your query. I have notified our live agent team immediately and paused automated replies so a human can step in to assist you.";
+        } else if (isAutoReplyAll) {
+          replyText = "Namaste, boliye kya haal chaal? Sab theek? Kripya bataiye kya baat thi.";
         } else {
           await MessageLog.create({
             sender,
@@ -395,6 +397,11 @@ const handleTwilioWebhook = async (req, res) => {
           return res.type('text/xml').send(buildTwimlEmptyResponse());
         }
       }
+    }
+
+    // Strictly sanitize kinship terms when Global Auto-Reply All is active
+    if (isAutoReplyAll && replyText) {
+      replyText = stripKinshipTerms(replyText);
     }
 
     // 13. Record log in MongoDB
@@ -676,7 +683,7 @@ const handleIncoming = async (req, res) => {
     if (isProfanityFilterActive) {
       const profanityResult = detectProfanity(messageText, settings.customProfanityKeywords || []);
       if (profanityResult.hasProfanity) {
-        const strikeInfo = handleProfanityStrike(sender, profanityResult.detectedWord, settings);
+        const strikeInfo = handleProfanityStrike(sender, profanityResult.detectedWord, settings, isAutoReplyAll);
         console.log(`🛑 [Meta] ABUSE / PROFANITY DETECTED from ${sender} (Word: "${profanityResult.detectedWord}", Strike: ${strikeInfo.strike}, Action: ${strikeInfo.action}). Intercepting.`);
         replyText = strikeInfo.replyText;
         routingCategory = 'PROFANITY';
@@ -752,7 +759,7 @@ const handleIncoming = async (req, res) => {
     // Message Classification & Routing (Routine vs Complex)
     if (!replyText) {
       try {
-        const classification = await classifyMessage(messageText, matchedContact);
+        const classification = await classifyMessage(messageText, matchedContact, isAutoReplyAll);
         if (classification.category === 'ROUTINE' && classification.templateReply) {
           console.log(`⚡ Routine message identified: [${classification.intentKey}] -> Serving predefined template.`);
           replyText = classification.templateReply;
@@ -790,6 +797,8 @@ const handleIncoming = async (req, res) => {
         if (failResult.triggeredHandover) {
           console.log(`🚨 AI failed to resolve query after 3 attempts for ${sender}. Pausing automated responses.`);
           replyText = "I apologize, but I am unable to properly resolve your query. I have notified our live agent team immediately and paused automated replies so a human can step in to assist you.";
+        } else if (isAutoReplyAll) {
+          replyText = "Namaste, boliye kya haal chaal? Sab theek? Kripya bataiye kya baat thi.";
         } else {
           await MessageLog.create({
             sender,
@@ -806,6 +815,11 @@ const handleIncoming = async (req, res) => {
             .json({ status: "gemini_error", error: geminiErr.message, unresolvedAttempts: failResult.unresolvedAttempts });
         }
       }
+    }
+
+    // Strictly sanitize kinship terms when Global Auto-Reply All is active
+    if (isAutoReplyAll && replyText) {
+      replyText = stripKinshipTerms(replyText);
     }
 
     // 4. Send response back via Meta WhatsApp Cloud API

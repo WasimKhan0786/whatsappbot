@@ -235,41 +235,29 @@ const userStrikes = new Map();
  * Handles user profanity strike count and resolves the appropriate reply:
  * Strike 1: Warning
  * Strike 2+: Retaliation from customResponses
+ * When isAutoReplyAll is true: Firm & confrontational response matching aggression with zero kinship terms.
  *
  * @param {string} senderId - Phone number or unique ID of the sender
  * @param {string} detectedWord - The abusive word that triggered the check
  * @param {object} settings - BotSettings object (optional overrides)
+ * @param {boolean} isAutoReplyAll - Whether Global Auto-Reply All is active
  * @returns {{ strike: number, replyText: string, action: 'WARNING' | 'RETALIATION' }}
  */
-function handleProfanityStrike(senderId, detectedWord, settings = {}) {
+function handleProfanityStrike(senderId, detectedWord, settings = {}, isAutoReplyAll = false) {
   const key = senderId ? String(senderId).trim() : 'anonymous';
   const current = userStrikes.get(key) || { count: 0, lastStrikeAt: 0 };
   const newCount = current.count + 1;
   userStrikes.set(key, { count: newCount, lastStrikeAt: Date.now() });
 
-  if (newCount === 1) {
-    // Strike 1: Warning Message
-    const warning =
-      settings.profanityReplyMessage ||
-      WARNING_MESSAGE ||
-      '⚠️ *Aakhri Chetwani (Last Warning):* Kripya ashabhya ya galat bhasha ka istemal na karein. Yeh aakhri warning hai!';
-    return {
-      strike: 1,
-      replyText: warning,
-      action: 'WARNING',
-    };
-  }
-
-  // Strike 2+: Custom Retaliation Message
+  // Pick randomly from CUSTOM_RETALIATION_REPLIES in customResponses.js
   let retaliationText = '';
   if (Array.isArray(CUSTOM_RETALIATION_REPLIES) && CUSTOM_RETALIATION_REPLIES.length > 0) {
     const randomIndex = Math.floor(Math.random() * CUSTOM_RETALIATION_REPLIES.length);
     retaliationText = CUSTOM_RETALIATION_REPLIES[randomIndex];
   }
 
-  // Fallback if user hasn't filled custom responses yet
   if (!retaliationText || typeof retaliationText !== 'string' || !retaliationText.trim()) {
-    retaliationText = `⚠️ Warning ke baad bhi ashabhya bhasha ka upyog kiya gaya (Strike ${newCount})!`;
+    retaliationText = `Aukat mein reh kar baat karo, samjhe?`;
   }
 
   return {

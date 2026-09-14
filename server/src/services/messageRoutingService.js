@@ -1,5 +1,5 @@
 const RoutineTemplate = require('../models/RoutineTemplate');
-const { resolveContactPersona } = require('./personaService');
+const { resolveContactPersona, stripKinshipTerms } = require('./personaService');
 
 /**
  * Message Classification & Routing System
@@ -149,9 +149,10 @@ async function seedDefaultRoutineTemplates() {
  *
  * @param {string} messageText - The text received from the sender
  * @param {object|null} contact - Optional matched WhitelistContact document
+ * @param {boolean} isAutoReplyAll - Whether Global Auto-Reply All is active
  * @returns {Promise<{ category: 'ROUTINE' | 'COMPLEX', intentKey: string, confidence: number, templateReply: string|null, reason: string }>}
  */
-async function classifyMessage(messageText, contact = null) {
+async function classifyMessage(messageText, contact = null, isAutoReplyAll = false) {
   if (!messageText || typeof messageText !== 'string') {
     return {
       category: 'COMPLEX',
@@ -202,8 +203,8 @@ async function classifyMessage(messageText, contact = null) {
   }
 
   // 4. Pattern matching against Routine Templates
-  const persona = resolveContactPersona(contact);
-  const personaKey = persona?.key || 'FRIENDLY';
+  const persona = isAutoReplyAll ? { key: 'PROFESSIONAL' } : resolveContactPersona(contact);
+  const personaKey = isAutoReplyAll ? 'PROFESSIONAL' : (persona?.key || 'FRIENDLY');
 
   for (const tpl of templates) {
     for (const patStr of tpl.patterns || []) {
@@ -214,6 +215,10 @@ async function classifyMessage(messageText, contact = null) {
           let reply = tpl.defaultTemplate;
           if (tpl.personaOverrides && tpl.personaOverrides[personaKey]) {
             reply = tpl.personaOverrides[personaKey];
+          }
+
+          if (isAutoReplyAll && reply) {
+            reply = stripKinshipTerms(reply);
           }
 
           // Increment usage count asynchronously

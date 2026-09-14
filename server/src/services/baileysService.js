@@ -12,7 +12,7 @@ const fs = require('fs');
 const { generateGeminiReply } = require('./geminiService');
 const { processIncomingMedia } = require('./mediaService');
 const { checkActiveSchedule, startOutboundScheduler } = require('./scheduleService');
-const { buildDynamicPersonaPrompt, resolveContactPersona } = require('./personaService');
+const { buildDynamicPersonaPrompt, resolveContactPersona, stripKinshipTerms } = require('./personaService');
 const {
   getGeminiChatHistory,
   recordMessageExchange,
@@ -700,7 +700,7 @@ async function initBaileys(forceRestart = false) {
           if (!replyText && isProfanityFilterActive) {
             const profanityResult = detectProfanity(messageText, settings.customProfanityKeywords || []);
             if (profanityResult.hasProfanity) {
-              const strikeInfo = handleProfanityStrike(senderPhone, profanityResult.detectedWord, settings);
+              const strikeInfo = handleProfanityStrike(senderPhone, profanityResult.detectedWord, settings, isAutoReplyAll);
               console.log(`[Baileys] 🛑 ABUSE / PROFANITY DETECTED from ${senderPhone} (Word: "${profanityResult.detectedWord}", Strike: ${strikeInfo.strike}, Action: ${strikeInfo.action}). Intercepting.`);
               replyText = strikeInfo.replyText;
               routingCategory = 'PROFANITY';
@@ -768,7 +768,7 @@ async function initBaileys(forceRestart = false) {
           // Message Classification & Routing (Routine vs Complex)
           if (!replyText && !processedMedia) {
             try {
-              const classification = await classifyMessage(messageText, matchedContact);
+              const classification = await classifyMessage(messageText, matchedContact, isAutoReplyAll);
               if (classification.category === 'ROUTINE' && classification.templateReply) {
                 console.log(`[Baileys] ⚡ Routine message identified: [${classification.intentKey}] -> Instant predefined template reply.`);
                 replyText = classification.templateReply;
@@ -818,6 +818,8 @@ async function initBaileys(forceRestart = false) {
               if (failResult.triggeredHandover) {
                 console.log(`[Baileys] 🚨 AI failed after 3 attempts for ${senderPhone}. Pausing automated responses.`);
                 replyText = "I apologize, but I am unable to properly resolve your query. I have notified our live agent team immediately and paused automated replies so a human can step in to assist you.";
+              } else if (isAutoReplyAll) {
+                replyText = "Namaste, boliye kya haal chaal? Sab theek? Kripya bataiye kya baat thi.";
               } else {
                 if (persona.key === 'ROMANTIC') {
                   replyText = "Haan meri jaan! Bas abhi free hua. Khana khaya aapne? Sab theek?";
@@ -832,6 +834,11 @@ async function initBaileys(forceRestart = false) {
                 }
               }
             }
+          }
+
+          // Strictly strip kinship terms if Global Auto-Reply All is active (except for intentional profanity retaliation)
+          if (isAutoReplyAll && replyText && routingCategory !== 'PROFANITY') {
+            replyText = stripKinshipTerms(replyText);
           }
 
           // Dynamic Typing Speed & Rhythm Delay Calculation
