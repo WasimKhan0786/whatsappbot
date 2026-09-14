@@ -54,16 +54,29 @@ async function generateGroqReply(userMessage, systemPrompt = '', chatHistory = [
 
     messages.push({ role: 'user', content: userMessage });
 
-    const completion = await client.chat.completions.create({
-      model: 'llama-3.1-8b-instant',
-      messages,
-      temperature: 0.7,
-      max_tokens: 300,
-    });
+    const primaryModel = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
+    let completion = null;
+
+    try {
+      completion = await client.chat.completions.create({
+        model: primaryModel,
+        messages,
+        temperature: 0.7,
+        max_tokens: 300,
+      });
+    } catch (modelErr) {
+      console.warn(`[Groq] Primary model (${primaryModel}) failed: ${modelErr.message}. Trying groq/compound-mini fallback...`);
+      completion = await client.chat.completions.create({
+        model: 'groq/compound-mini',
+        messages,
+        temperature: 0.7,
+        max_tokens: 300,
+      });
+    }
 
     const reply = completion.choices?.[0]?.message?.content || null;
     if (reply) {
-      console.log(`[Groq] ⚡ Fast routine reply generated in ${completion.usage?.total_time || '0.1'}s with llama-3.1-8b-instant`);
+      console.log(`[Groq] ⚡ Fast routine reply generated successfully via Groq`);
     }
     return reply;
   } catch (err) {
