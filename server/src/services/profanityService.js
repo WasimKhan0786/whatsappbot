@@ -237,11 +237,63 @@ const userStrikes = new Map();
  * Strike 2+: Retaliation from customResponses
  * When isAutoReplyAll is true: Firm & confrontational response matching aggression with zero kinship terms.
  *
+/**
+ * Smart Combiner: Dynamically selects and mixes custom responses
+ * to create varied, non-repetitive retaliation replies without triggering AI safety filters.
+ */
+function getSmartCombinedRetaliation() {
+  const validReplies = (CUSTOM_RETALIATION_REPLIES || [])
+    .map((r) => (typeof r === 'string' ? r.trim() : ''))
+    .filter((r) => r.length > 0);
+
+  if (validReplies.length === 0) {
+    return 'Aukat mein reh kar baat karo, samjhe?';
+  }
+
+  const idx1 = Math.floor(Math.random() * validReplies.length);
+  const first = validReplies[idx1];
+
+  // 65% chance to combine with a second distinct line for maximum variety
+  const shouldCombine = Math.random() < 0.65 && validReplies.length > 1;
+  if (!shouldCombine) {
+    return first;
+  }
+
+  // Filter for distinct secondary candidate
+  let candidates = validReplies.filter(
+    (r) =>
+      r.toLowerCase() !== first.toLowerCase() &&
+      !first.toLowerCase().includes(r.toLowerCase()) &&
+      !r.toLowerCase().includes(first.toLowerCase())
+  );
+
+  if (candidates.length === 0) {
+    candidates = validReplies.filter((r) => r !== first);
+  }
+
+  if (candidates.length === 0) {
+    return first;
+  }
+
+  const idx2 = Math.floor(Math.random() * candidates.length);
+  const second = candidates[idx2];
+
+  // Mix smoothly with natural punctuation or space
+  const separator = Math.random() < 0.5 ? ', ' : ' ';
+  return `${first}${separator}${second}`.trim();
+}
+
+/**
+ * Handles user profanity strike count and resolves the appropriate reply:
+ * Strike 1: Warning or immediate retaliation
+ * Strike 2+: Retaliation from customResponses with Smart Combiner
+ * When isAutoReplyAll is true: Firm & confrontational response matching aggression with zero kinship terms.
+ *
  * @param {string} senderId - Phone number or unique ID of the sender
  * @param {string} detectedWord - The abusive word that triggered the check
  * @param {object} settings - BotSettings object (optional overrides)
  * @param {boolean} isAutoReplyAll - Whether Global Auto-Reply All is active
- * @returns {{ strike: number, replyText: string, action: 'WARNING' | 'RETALIATION' }}
+ * @returns {{ strike: number, replyText: string, action: 'RETALIATION' }}
  */
 function handleProfanityStrike(senderId, detectedWord, settings = {}, isAutoReplyAll = false) {
   const key = senderId ? String(senderId).trim() : 'anonymous';
@@ -249,12 +301,8 @@ function handleProfanityStrike(senderId, detectedWord, settings = {}, isAutoRepl
   const newCount = current.count + 1;
   userStrikes.set(key, { count: newCount, lastStrikeAt: Date.now() });
 
-  // Pick randomly from CUSTOM_RETALIATION_REPLIES in customResponses.js
-  let retaliationText = '';
-  if (Array.isArray(CUSTOM_RETALIATION_REPLIES) && CUSTOM_RETALIATION_REPLIES.length > 0) {
-    const randomIndex = Math.floor(Math.random() * CUSTOM_RETALIATION_REPLIES.length);
-    retaliationText = CUSTOM_RETALIATION_REPLIES[randomIndex];
-  }
+  // Dynamically generate mixed response using Smart Combiner
+  let retaliationText = getSmartCombinedRetaliation();
 
   if (!retaliationText || typeof retaliationText !== 'string' || !retaliationText.trim()) {
     retaliationText = `Aukat mein reh kar baat karo, samjhe?`;
