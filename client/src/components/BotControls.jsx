@@ -688,6 +688,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
 
       {/* 🛡️ Anti-Ban & Human Simulation Protection Shield */}
       <div
+        id="anti-ban-card"
         style={{
           marginTop: 16,
           marginBottom: 20,

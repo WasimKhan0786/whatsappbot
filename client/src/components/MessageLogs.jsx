@@ -178,7 +178,7 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
                   <User size={13} />
                   <span>{log.sender}</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div className="log-badges-wrap">
                   {log.routingCategory && (
                     <span
                       style={{
