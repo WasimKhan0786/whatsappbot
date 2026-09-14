@@ -26,6 +26,7 @@ const {
   testGoogleSearch,
   getNasaApodEndpoint,
   getNasaAsteroidsEndpoint,
+  getWeatherEndpoint,
 } = require('../controllers/settingsController');
 
 const {
@@ -125,5 +126,9 @@ router.post('/search/test', testGoogleSearch);
 // NASA Space Exploration & APOD Integration
 router.get('/nasa/apod', getNasaApodEndpoint);
 router.get('/nasa/asteroids', getNasaAsteroidsEndpoint);
+
+// OpenWeatherMap Real-Time Weather Forecast Integration
+router.get('/weather', getWeatherEndpoint);
+router.post('/weather/test', getWeatherEndpoint);
 
 module.exports = router;

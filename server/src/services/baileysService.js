@@ -67,6 +67,11 @@ const {
   formatNasaApodForWhatsApp,
   formatNasaNeoForWhatsApp,
 } = require('./nasaService');
+const {
+  fetchCurrentWeather,
+  extractWeatherQuery,
+  formatWeatherForWhatsApp,
+} = require('./weatherService');
 
 // State variables
 let sock = null;
@@ -875,6 +880,22 @@ async function initBaileys(forceRestart = false) {
                 }
               } catch (nasaErr) {
                 console.error('[Baileys] NASA request error:', nasaErr.message);
+              }
+            }
+          }
+
+          // 🌦️ 6. REAL-TIME WEATHER FORECAST INTERCEPT (OpenWeatherMap)
+          if (!replyText) {
+            const weatherReq = extractWeatherQuery(messageText);
+            if (weatherReq.isWeatherRequest && weatherReq.city) {
+              console.log(`[Baileys] 🌦️ Weather request identified from ${senderPhone}: "${weatherReq.city}"`);
+              try {
+                const weatherData = await fetchCurrentWeather({ city: weatherReq.city });
+                replyText = formatWeatherForWhatsApp(weatherData, weatherReq.city);
+                routingCategory = 'WEATHER';
+                routingIntent = `WEATHER:${weatherReq.city.substring(0, 25)}`;
+              } catch (weatherErr) {
+                console.error('[Baileys] Weather fetch error:', weatherErr.message);
               }
             }
           }

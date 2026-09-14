@@ -60,6 +60,11 @@ const {
   formatNasaApodForWhatsApp,
   formatNasaNeoForWhatsApp,
 } = require('../services/nasaService');
+const {
+  fetchCurrentWeather,
+  extractWeatherQuery,
+  formatWeatherForWhatsApp,
+} = require('../services/weatherService');
 
 /**
  * GET /api/settings
@@ -1245,6 +1250,28 @@ const getNasaAsteroidsEndpoint = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/weather
+ * POST /api/weather/test
+ * Fetch live weather from OpenWeatherMap
+ */
+const getWeatherEndpoint = async (req, res) => {
+  try {
+    const city = req.body?.city || req.query?.city || req.query?.q || 'Delhi';
+    const lat = req.body?.lat || req.query?.lat;
+    const lon = req.body?.lon || req.query?.lon;
+
+    const weatherData = await fetchCurrentWeather({ city, lat, lon });
+    return res.json({
+      ...weatherData,
+      whatsappFormatted: formatWeatherForWhatsApp(weatherData, city),
+    });
+  } catch (err) {
+    console.error('Error in getWeatherEndpoint:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 module.exports = {
   getSettings,
   updateSettings,
@@ -1271,6 +1298,7 @@ module.exports = {
   testGoogleSearch,
   getNasaApodEndpoint,
   getNasaAsteroidsEndpoint,
+  getWeatherEndpoint,
 };
 
 
