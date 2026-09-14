@@ -24,6 +24,8 @@ const {
   resumeOwnerInactivityHandler,
   testNewsSearch,
   testGoogleSearch,
+  getNasaApodEndpoint,
+  getNasaAsteroidsEndpoint,
 } = require('../controllers/settingsController');
 
 const {
@@ -119,5 +121,9 @@ router.post('/news/test', testNewsSearch);
 // Google Programmable Search Engine Integration
 router.get('/search', testGoogleSearch);
 router.post('/search/test', testGoogleSearch);
+
+// NASA Space Exploration & APOD Integration
+router.get('/nasa/apod', getNasaApodEndpoint);
+router.get('/nasa/asteroids', getNasaAsteroidsEndpoint);
 
 module.exports = router;

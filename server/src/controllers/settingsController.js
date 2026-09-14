@@ -54,6 +54,12 @@ const {
   extractSearchQuery,
   formatSearchResultsForWhatsApp,
 } = require('../services/googleSearchService');
+const {
+  fetchNasaApod,
+  fetchNearEarthObjects,
+  formatNasaApodForWhatsApp,
+  formatNasaNeoForWhatsApp,
+} = require('../services/nasaService');
 
 /**
  * GET /api/settings
@@ -1204,6 +1210,41 @@ const testGoogleSearch = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/nasa/apod
+ * Fetch NASA Astronomy Picture of the Day
+ */
+const getNasaApodEndpoint = async (req, res) => {
+  try {
+    const { date, count } = req.query;
+    const data = await fetchNasaApod({ date, count: count ? Number(count) : undefined });
+    return res.json({
+      ...data,
+      whatsappFormatted: formatNasaApodForWhatsApp(data),
+    });
+  } catch (err) {
+    console.error('Error in getNasaApodEndpoint:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+/**
+ * GET /api/nasa/asteroids
+ * Fetch Near Earth Asteroids approaching today
+ */
+const getNasaAsteroidsEndpoint = async (req, res) => {
+  try {
+    const data = await fetchNearEarthObjects();
+    return res.json({
+      ...data,
+      whatsappFormatted: formatNasaNeoForWhatsApp(data),
+    });
+  } catch (err) {
+    console.error('Error in getNasaAsteroidsEndpoint:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 module.exports = {
   getSettings,
   updateSettings,
@@ -1228,6 +1269,8 @@ module.exports = {
   resumeOwnerInactivityHandler,
   testNewsSearch,
   testGoogleSearch,
+  getNasaApodEndpoint,
+  getNasaAsteroidsEndpoint,
 };
 
 

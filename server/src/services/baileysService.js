@@ -60,6 +60,13 @@ const {
   searchGoogle,
   formatSearchResultsForWhatsApp,
 } = require('./googleSearchService');
+const {
+  fetchNasaApod,
+  fetchNearEarthObjects,
+  extractNasaRequest,
+  formatNasaApodForWhatsApp,
+  formatNasaNeoForWhatsApp,
+} = require('./nasaService');
 
 // State variables
 let sock = null;
@@ -821,6 +828,53 @@ async function initBaileys(forceRestart = false) {
                 }
               } catch (searchErr) {
                 console.error('[Baileys] Google Search failed:', searchErr.message);
+              }
+            }
+          }
+
+          // 🚀 5. NASA OPEN APIS INTERCEPT (APOD & Asteroid Tracker)
+          if (!replyText) {
+            const nasaReq = extractNasaRequest(messageText);
+            if (nasaReq.isNasaRequest) {
+              console.log(`[Baileys] 🚀 NASA Space request identified from ${senderPhone}: [Type: ${nasaReq.type}]`);
+              try {
+                if (nasaReq.type === 'APOD') {
+                  const apodData = await fetchNasaApod();
+                  if (apodData.success) {
+                    const caption = formatNasaApodForWhatsApp(apodData);
+                    if (apodData.mediaType === 'image' && apodData.imageUrl) {
+                      try {
+                        await sock.sendMessage(senderJid, {
+                          image: { url: apodData.imageUrl },
+                          caption,
+                        });
+                        await MessageLog.create({
+                          sender: senderPhone,
+                          messageIn: messageText,
+                          messageOut: `[NASA APOD Image sent] ${apodData.title}`,
+                          status: 'SENT',
+                          routingCategory: 'NASA_SPACE',
+                          routingIntent: 'NASA_APOD_IMAGE',
+                        });
+                        return;
+                      } catch (imgSendErr) {
+                        console.warn('[Baileys] NASA direct image send failed, falling back to text:', imgSendErr.message);
+                        replyText = caption;
+                      }
+                    } else {
+                      replyText = caption;
+                    }
+                    routingCategory = 'NASA_SPACE';
+                    routingIntent = 'NASA_APOD';
+                  }
+                } else if (nasaReq.type === 'ASTEROID') {
+                  const neoData = await fetchNearEarthObjects();
+                  replyText = formatNasaNeoForWhatsApp(neoData);
+                  routingCategory = 'NASA_SPACE';
+                  routingIntent = 'NASA_ASTEROIDS';
+                }
+              } catch (nasaErr) {
+                console.error('[Baileys] NASA request error:', nasaErr.message);
               }
             }
           }
