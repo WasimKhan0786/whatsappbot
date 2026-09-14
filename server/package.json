@@ -11,6 +11,7 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.0",
     "@huggingface/inference": "^4.13.28",
+    "@pinecone-database/pinecone": "^9.0.0",
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "axios": "^1.7.9",
     "cors": "^2.8.5",

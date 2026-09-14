@@ -6,9 +6,10 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
  * @param {string} customSystemPrompt - Optional prompt instructing persona and tone
  * @param {Array} [chatHistory=[]] - Multi-turn conversation history
  * @param {object|null} [mediaPayload=null] - Processed media data (extracted text, style guidance, inline compressed image)
+ * @param {string} [semanticContext=''] - Relevant long-term past conversation memory from Pinecone vector search
  * @returns {Promise<string>} - Polite AI generated response mirroring original content & style
  */
-async function generateGeminiReply(userMessage, customSystemPrompt, chatHistory = [], mediaPayload = null) {
+async function generateGeminiReply(userMessage, customSystemPrompt, chatHistory = [], mediaPayload = null, semanticContext = '') {
   const apiKey = process.env.GEMINI_API_KEY;
 
   const defaultPrompt =
@@ -24,7 +25,10 @@ async function generateGeminiReply(userMessage, customSystemPrompt, chatHistory 
     '- Daily Session Context Prioritization: Prioritize the current day\'s chat context. If no relevant information is found in the daily session to address an incoming message, analyze the message independently and generate an appropriate, context-aware reply.\n' +
     '- Agar koi "Assalam Walekum" ya "salam" bole, toh reply: "Walaikum Assalam bhai! Kaise ho? Boliye kya baat thi?".';
 
-  const systemInstruction = customSystemPrompt || defaultPrompt;
+  let systemInstruction = customSystemPrompt || defaultPrompt;
+  if (semanticContext && typeof semanticContext === 'string' && semanticContext.trim() !== '') {
+    systemInstruction = `${systemInstruction}\n\n${semanticContext.trim()}`;
+  }
 
   // Build message input parts (text + optional inline compressed image)
   let contentParts = [];

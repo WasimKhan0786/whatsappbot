@@ -48,6 +48,11 @@ const {
   fetchRealTimeNews,
   formatNewsForWhatsApp,
 } = require('./worldNewsService');
+const {
+  storeConversationVector,
+  queryRelevantHistory,
+  formatSemanticContextForPrompt,
+} = require('./pineconeService');
 
 // State variables
 let sock = null;
@@ -811,7 +816,23 @@ async function initBaileys(forceRestart = false) {
           if (!replyText) {
             try {
               const chatHistory = await getGeminiChatHistory(senderPhone);
-              replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory, processedMedia);
+
+              // 🌲 Retrieve relevant semantic past interactions from Pinecone Vector Memory
+              let pineconeSemanticContext = '';
+              try {
+                const pastMatches = await queryRelevantHistory(senderPhone, messageText);
+                pineconeSemanticContext = formatSemanticContextForPrompt(pastMatches);
+              } catch (pinQueryErr) {
+                console.warn('[Baileys] Pinecone memory query note:', pinQueryErr.message);
+              }
+
+              replyText = await generateGeminiReply(
+                messageText,
+                dynamicPrompt,
+                chatHistory,
+                processedMedia,
+                pineconeSemanticContext
+              );
               await resetFailedAttempts(senderPhone);
 
               // 🎨 Intercept Gemini-triggered image generation tag [GENERATE_IMAGE: <prompt>]
@@ -897,6 +918,14 @@ async function initBaileys(forceRestart = false) {
             await sock.sendMessage(senderJid, { text: replyText });
             console.log(`[Anti-Ban Shield] ✅ Message naturally delivered to ${senderPhone}: "${replyText.substring(0, 75)}..."`);
           }
+
+          // 🌲 Store interaction vector in Pinecone for semantic long-term memory
+          storeConversationVector(senderPhone, messageText, replyText, {
+            source: 'baileys_whatsapp',
+            routingCategory,
+          }).catch((pinStoreErr) => {
+            console.warn('[Baileys] Pinecone vector store note:', pinStoreErr.message);
+          });
 
           // Update message count for contact separately & check if limit reached
           const incResult = await incrementContactMessageCount(senderPhone, matchedContact, effectiveLimit);

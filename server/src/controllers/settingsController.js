@@ -28,6 +28,11 @@ const {
   markContactFarewellSent,
   resolveFarewellClosingMessage,
 } = require('../services/chatHistoryService');
+const {
+  storeConversationVector,
+  queryRelevantHistory,
+  formatSemanticContextForPrompt,
+} = require('../services/pineconeService');
 const { processGameTurn } = require('../services/gameService');
 const { analyzeAndTagContact } = require('../services/crmService');
 const { getSupervisorStatus, triggerTestAlert } = require('../services/errorRecoveryService');
@@ -661,7 +666,20 @@ const simulateIncoming = async (req, res) => {
           isAutoReplyAll
         );
         const chatHistory = await getGeminiChatHistory(sender);
-        replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
+
+        let pineconeSemanticContext = '';
+        try {
+          const pastMatches = await queryRelevantHistory(sender, messageText);
+          pineconeSemanticContext = formatSemanticContextForPrompt(pastMatches);
+        } catch (pinErr) {}
+
+        replyText = await generateGeminiReply(
+          messageText,
+          dynamicPrompt,
+          chatHistory,
+          null,
+          pineconeSemanticContext
+        );
         await resetFailedAttempts(sender);
 
         const geminiImageMatch = replyText && replyText.match(/\[GENERATE_IMAGE:\s*([^\]]+)\]/i);
@@ -714,6 +732,9 @@ const simulateIncoming = async (req, res) => {
 
     // 4. WhatsApp Send (or simulation)
     const whatsappResult = await sendWhatsAppMessage(sender, replyText);
+
+    // 🌲 Store interaction vector in Pinecone for semantic memory
+    storeConversationVector(sender, messageText, replyText, { source: 'simulator' }).catch(() => {});
 
     let closingMessageSent = null;
     if (effectiveLimit > 0) {

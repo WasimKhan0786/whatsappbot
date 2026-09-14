@@ -35,6 +35,11 @@ const {
   fetchRealTimeNews,
   formatNewsForWhatsApp,
 } = require("../services/worldNewsService");
+const {
+  storeConversationVector,
+  queryRelevantHistory,
+  formatSemanticContextForPrompt,
+} = require("../services/pineconeService");
 
 /**
  * Normalizes phone numbers for comparison (removes all non-digit characters)
@@ -391,7 +396,20 @@ const handleTwilioWebhook = async (req, res) => {
           null,
           isAutoReplyAll
         );
-        replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
+
+        let pineconeSemanticContext = '';
+        try {
+          const pastMatches = await queryRelevantHistory(sender, messageText);
+          pineconeSemanticContext = formatSemanticContextForPrompt(pastMatches);
+        } catch (pinErr) {}
+
+        replyText = await generateGeminiReply(
+          messageText,
+          dynamicPrompt,
+          chatHistory,
+          null,
+          pineconeSemanticContext
+        );
         await resetFailedAttempts(sender);
       } catch (geminiErr) {
         console.error('[Twilio] Gemini error:', geminiErr.message);
@@ -445,6 +463,9 @@ const handleTwilioWebhook = async (req, res) => {
     } catch (histErr) {
       console.warn('[Twilio] History record error:', histErr.message);
     }
+
+    // 🌲 Store interaction vector in Pinecone
+    storeConversationVector(sender, messageText, replyText, { source: 'twilio_whatsapp' }).catch(() => {});
 
     // 14. Increment contact count & handle auto-closing message
     if (effectiveLimit > 0) {
@@ -822,7 +843,20 @@ const handleIncoming = async (req, res) => {
           null,
           isAutoReplyAll
         );
-        replyText = await generateGeminiReply(messageText, dynamicPrompt, chatHistory);
+
+        let pineconeSemanticContext = '';
+        try {
+          const pastMatches = await queryRelevantHistory(sender, messageText);
+          pineconeSemanticContext = formatSemanticContextForPrompt(pastMatches);
+        } catch (pinErr) {}
+
+        replyText = await generateGeminiReply(
+          messageText,
+          dynamicPrompt,
+          chatHistory,
+          null,
+          pineconeSemanticContext
+        );
         await resetFailedAttempts(sender);
       } catch (geminiErr) {
         console.error("Gemini error:", geminiErr.message);
@@ -887,6 +921,9 @@ const handleIncoming = async (req, res) => {
       } catch (histErr) {
         console.warn('History record err:', histErr.message);
       }
+
+      // 🌲 Store interaction vector in Pinecone
+      storeConversationVector(sender, messageText, replyText, { source: 'meta_cloud_whatsapp' }).catch(() => {});
 
       // Update message count for contact separately & check if farewell closing announcement should be triggered
       if (effectiveLimit > 0) {
