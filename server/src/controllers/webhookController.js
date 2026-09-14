@@ -14,6 +14,10 @@ const {
   resetFailedAttempts,
   getSessionMessageCount,
   incrementSessionMessageCount,
+  getContactMessageCountInfo,
+  incrementContactMessageCount,
+  markContactFarewellSent,
+  resolveFarewellClosingMessage,
 } = require("../services/chatHistoryService");
 const { processGameTurn } = require("../services/gameService");
 const { buildDynamicPersonaPrompt, stripKinshipTerms } = require("../services/personaService");
@@ -175,21 +179,34 @@ const handleTwilioWebhook = async (req, res) => {
     }
 
     // 6. Check Per-Contact or Global Max Message Cap
-    const effectiveLimit = (matchedContact && typeof matchedContact.maxMessageLimit === 'number' && matchedContact.maxMessageLimit > 0)
-      ? matchedContact.maxMessageLimit
-      : (settings.defaultMaxMessagesPerContact || 0);
+    const contactCountInfo = await getContactMessageCountInfo(sender, matchedContact, settings);
+    const effectiveLimit = contactCountInfo.effectiveLimit;
 
-    const sessionCountInfo = await getSessionMessageCount(sender);
-    if (effectiveLimit > 0 && sessionCountInfo.messagesSentCount >= effectiveLimit) {
-      console.log(`🛑 [Twilio] MAX MESSAGE LIMIT REACHED (${sessionCountInfo.messagesSentCount}/${effectiveLimit}) for ${sender}.`);
-      await MessageLog.create({
-        sender,
-        messageIn: messageText,
-        messageOut: `[Auto-Cap Reached (${sessionCountInfo.messagesSentCount}/${effectiveLimit}) - AI response skipped]`,
-        status: 'CAP_REACHED',
-        metaMessageId: messageId,
-      });
-      return res.type('text/xml').send(buildTwimlEmptyResponse());
+    if (contactCountInfo.isCapReached) {
+      if (!contactCountInfo.isFarewellSent) {
+        const farewellText = resolveFarewellClosingMessage(matchedContact, settings);
+        console.log(`🛑 [Twilio] MAX MESSAGE LIMIT REACHED (${contactCountInfo.currentCount}/${effectiveLimit}) for ${sender}. Sending farewell.`);
+        await markContactFarewellSent(sender, matchedContact);
+        await MessageLog.create({
+          sender,
+          messageIn: messageText,
+          messageOut: farewellText,
+          status: 'CAP_CLOSING_SENT',
+          metaMessageId: messageId,
+        });
+        await recordMessageExchange(sender, messageText, farewellText);
+        return res.type('text/xml').send(buildTwimlMessageResponse(farewellText));
+      } else {
+        console.log(`🛑 [Twilio] MAX MESSAGE LIMIT REACHED (${contactCountInfo.currentCount}/${effectiveLimit}) for ${sender}. Skipping automated reply.`);
+        await MessageLog.create({
+          sender,
+          messageIn: messageText,
+          messageOut: `[Auto-Cap Reached (${contactCountInfo.currentCount}/${effectiveLimit}) - AI response skipped]`,
+          status: 'CAP_REACHED',
+          metaMessageId: messageId,
+        });
+        return res.type('text/xml').send(buildTwimlEmptyResponse());
+      }
     }
 
     // 7. Check if Live Agent Mode is Active
@@ -431,12 +448,10 @@ const handleTwilioWebhook = async (req, res) => {
 
     // 14. Increment contact count & handle auto-closing message
     if (effectiveLimit > 0) {
-      const incResult = await incrementSessionMessageCount(sender, effectiveLimit);
-      if (incResult.reachedCapNow && incResult.currentCount === effectiveLimit) {
-        const closingText = (settings.limitReachedClosingMessage && settings.limitReachedClosingMessage.trim() !== '')
-          ? settings.limitReachedClosingMessage.trim()
-          : 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke unke banaye huye AI wasim bot se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much!';
-
+      const incResult = await incrementContactMessageCount(sender, matchedContact, effectiveLimit);
+      if (incResult.reachedCapNow && !incResult.isFarewellSent) {
+        const closingText = resolveFarewellClosingMessage(matchedContact, settings);
+        await markContactFarewellSent(sender, matchedContact);
         replyText += `\n\n${closingText}`;
       }
     }
@@ -580,19 +595,37 @@ const handleIncoming = async (req, res) => {
     }
 
     // 2.2 Max Message Cap Check (Per-Contact or Global default)
-    const effectiveLimit = (matchedContact && typeof matchedContact.maxMessageLimit === 'number' && matchedContact.maxMessageLimit > 0)
-      ? matchedContact.maxMessageLimit
-      : (settings.defaultMaxMessagesPerContact || 0);
-    const sessionCountInfo = await getSessionMessageCount(sender);
-    if (effectiveLimit > 0 && sessionCountInfo.messagesSentCount >= effectiveLimit) {
-      console.log(`🛑 MAX MESSAGE LIMIT REACHED (${sessionCountInfo.messagesSentCount}/${effectiveLimit}) for ${sender}. Skipping automated reply.`);
-      await MessageLog.create({
-        sender,
-        messageIn: messageText,
-        messageOut: `[Auto-Cap Reached (${sessionCountInfo.messagesSentCount}/${effectiveLimit}) - AI response skipped]`,
-        status: 'CAP_REACHED',
-        metaMessageId: messageId,
-      });
+    const contactCountInfo = await getContactMessageCountInfo(sender, matchedContact, settings);
+    const effectiveLimit = contactCountInfo.effectiveLimit;
+
+    if (contactCountInfo.isCapReached) {
+      if (!contactCountInfo.isFarewellSent) {
+        const farewellText = resolveFarewellClosingMessage(matchedContact, settings);
+        console.log(`🛑 MAX MESSAGE LIMIT REACHED (${contactCountInfo.currentCount}/${effectiveLimit}) for ${sender}. Sending farewell message.`);
+        try {
+          await sendWhatsAppMessage(sender, farewellText);
+          await markContactFarewellSent(sender, matchedContact);
+          await MessageLog.create({
+            sender,
+            messageIn: messageText,
+            messageOut: farewellText,
+            status: 'CAP_CLOSING_SENT',
+            metaMessageId: messageId,
+          });
+          await recordMessageExchange(sender, messageText, farewellText);
+        } catch (farewellSendErr) {
+          console.warn('[Webhook] Error sending farewell message:', farewellSendErr.message);
+        }
+      } else {
+        console.log(`🛑 MAX MESSAGE LIMIT REACHED (${contactCountInfo.currentCount}/${effectiveLimit}) for ${sender}. Skipping automated reply.`);
+        await MessageLog.create({
+          sender,
+          messageIn: messageText,
+          messageOut: `[Auto-Cap Reached (${contactCountInfo.currentCount}/${effectiveLimit}) - AI response skipped]`,
+          status: 'CAP_REACHED',
+          metaMessageId: messageId,
+        });
+      }
       return res.status(200).json({ status: 'cap_reached' });
     }
 
@@ -855,18 +888,17 @@ const handleIncoming = async (req, res) => {
         console.warn('History record err:', histErr.message);
       }
 
-      // Update message count & check if farewell closing announcement should be triggered
+      // Update message count for contact separately & check if farewell closing announcement should be triggered
       if (effectiveLimit > 0) {
-        const incResult = await incrementSessionMessageCount(sender, effectiveLimit);
-        if (incResult.reachedCapNow && incResult.currentCount === effectiveLimit) {
-          const closingText = (settings.limitReachedClosingMessage && settings.limitReachedClosingMessage.trim() !== '')
-            ? settings.limitReachedClosingMessage.trim()
-            : 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke unke banaye huye  AI wasim bot se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much!';
+        const incResult = await incrementContactMessageCount(sender, matchedContact, effectiveLimit);
+        if (incResult.reachedCapNow && !incResult.isFarewellSent) {
+          const closingText = resolveFarewellClosingMessage(matchedContact, settings);
 
           console.log(`🏁 Sending Auto-Closing Announcement to ${sender}...`);
           setTimeout(async () => {
             try {
               await sendWhatsAppMessage(sender, closingText);
+              await markContactFarewellSent(sender, matchedContact);
               await MessageLog.create({
                 sender,
                 messageIn: `[Auto-Cap Limit (${incResult.currentCount}/${effectiveLimit}) Final Trigger]`,

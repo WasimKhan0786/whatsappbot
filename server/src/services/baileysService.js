@@ -23,6 +23,10 @@ const {
   resetFailedAttempts,
   getSessionMessageCount,
   incrementSessionMessageCount,
+  getContactMessageCountInfo,
+  incrementContactMessageCount,
+  markContactFarewellSent,
+  resolveFarewellClosingMessage,
 } = require('./chatHistoryService');
 const { processGameTurn } = require('./gameService');
 const { analyzeAndTagContact } = require('./crmService');
@@ -449,29 +453,47 @@ async function initBaileys(forceRestart = false) {
           }
 
           // 📊 CHECK PER-CONTACT & GLOBAL MAX MESSAGE LIMIT (AUTO-CAP CONTROLLER)
-          const effectiveLimit = matchedContact && typeof matchedContact.maxMessageLimit === 'number' && matchedContact.maxMessageLimit > 0
-            ? matchedContact.maxMessageLimit
-            : (settings.defaultMaxMessagesPerContact || 0);
+          const contactCountInfo = await getContactMessageCountInfo(senderPhone, matchedContact, settings);
+          const effectiveLimit = contactCountInfo.effectiveLimit;
+          const currentMsgCount = contactCountInfo.currentCount;
 
-          let currentMsgCount = 0;
-          if (matchedContact) {
-            currentMsgCount = matchedContact.messagesSentCount || 0;
-          } else {
-            const sessionInfo = await getSessionMessageCount(senderPhone);
-            currentMsgCount = sessionInfo.messagesSentCount;
-          }
+          if (contactCountInfo.isCapReached) {
+            // Check if farewell message has already been delivered to this contact
+            if (!contactCountInfo.isFarewellSent) {
+              const farewellText = resolveFarewellClosingMessage(matchedContact, settings);
+              console.log(`[Baileys] 🏁 Max message limit reached for ${senderPhone} (${currentMsgCount}/${effectiveLimit}). Sending farewell message now...`);
+              try {
+                await sock.sendPresenceUpdate('composing', senderJid);
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+                await sock.sendPresenceUpdate('paused', senderJid);
+                await sock.sendMessage(senderJid, { text: farewellText });
+                console.log(`[Baileys] ✅ Auto-Closing Farewell delivered to ${senderPhone}: "${farewellText.substring(0, 60)}..."`);
 
-          if (effectiveLimit > 0 && currentMsgCount >= effectiveLimit) {
-            console.log(`[Baileys] 🛑 MAX MESSAGE LIMIT REACHED (${currentMsgCount}/${effectiveLimit}) for ${senderPhone}. Skipping automated reply.`);
-            try {
-              await MessageLog.create({
-                sender: senderPhone,
-                messageIn: messageText,
-                messageOut: `[Auto-Cap Reached (${currentMsgCount}/${effectiveLimit}) - AI response skipped]`,
-                status: 'CAP_REACHED',
-                metaMessageId: msg.key.id || `baileys_${Date.now()}`,
-              });
-            } catch (capLogErr) {}
+                await markContactFarewellSent(senderPhone, matchedContact);
+
+                await MessageLog.create({
+                  sender: senderPhone,
+                  messageIn: messageText,
+                  messageOut: farewellText,
+                  status: 'CAP_CLOSING_SENT',
+                  metaMessageId: msg.key.id || `baileys_${Date.now()}`,
+                });
+                await recordMessageExchange(senderPhone, messageText, farewellText);
+              } catch (farewellErr) {
+                console.warn(`[Baileys] Failed to dispatch farewell message to ${senderPhone}:`, farewellErr.message);
+              }
+            } else {
+              console.log(`[Baileys] 🛑 MAX MESSAGE LIMIT REACHED (${currentMsgCount}/${effectiveLimit}) for ${senderPhone}. Farewell was already sent. Skipping automated reply.`);
+              try {
+                await MessageLog.create({
+                  sender: senderPhone,
+                  messageIn: messageText,
+                  messageOut: `[Auto-Cap Reached (${currentMsgCount}/${effectiveLimit}) - AI response skipped]`,
+                  status: 'CAP_REACHED',
+                  metaMessageId: msg.key.id || `baileys_${Date.now()}`,
+                });
+              } catch (capLogErr) {}
+            }
             continue;
           }
 
@@ -876,42 +898,20 @@ async function initBaileys(forceRestart = false) {
             console.log(`[Anti-Ban Shield] ✅ Message naturally delivered to ${senderPhone}: "${replyText.substring(0, 75)}..."`);
           }
 
-          // Update message count for contact / session & check if limit reached
-          let updatedCount = 0;
-          let reachedCapNow = false;
+          // Update message count for contact separately & check if limit reached
+          const incResult = await incrementContactMessageCount(senderPhone, matchedContact, effectiveLimit);
+          const updatedCount = incResult.currentCount;
+          const reachedCapNow = incResult.reachedCapNow;
 
-          if (matchedContact) {
-            matchedContact.messagesSentCount = (matchedContact.messagesSentCount || 0) + 1;
-            reachedCapNow = effectiveLimit > 0 && matchedContact.messagesSentCount >= effectiveLimit;
-            if (reachedCapNow) {
-              matchedContact.isCapReached = true;
-              matchedContact.capReachedAt = new Date();
-              console.log(`[Baileys] 🔒 Auto-Cap Reached for ${senderPhone}: Sent ${matchedContact.messagesSentCount}/${effectiveLimit} messages. Auto-replies paused.`);
-            }
-            try {
-              await matchedContact.save();
-            } catch (saveCountErr) {
-              console.warn('[Baileys] Error saving contact message count:', saveCountErr.message);
-            }
-            updatedCount = matchedContact.messagesSentCount;
-          } else {
-            const incResult = await incrementSessionMessageCount(senderPhone, effectiveLimit);
-            updatedCount = incResult.currentCount;
-            reachedCapNow = incResult.reachedCapNow;
-            if (reachedCapNow) {
-              console.log(`[Baileys] 🔒 Auto-Cap Reached for non-whitelisted session ${senderPhone}: Sent ${updatedCount}/${effectiveLimit} messages. Auto-replies paused.`);
-            }
+          if (reachedCapNow) {
+            console.log(`[Baileys] 🔒 Auto-Cap Reached for ${senderPhone}: Sent ${updatedCount}/${effectiveLimit} messages. Auto-replies paused for this contact.`);
           }
 
           // 🎯 Send Farewell Auto-Closing Announcement when limit is reached!
-          if (reachedCapNow && updatedCount === effectiveLimit) {
-            const closingText = (matchedContact?.customClosingMessage && matchedContact.customClosingMessage.trim() !== '')
-              ? matchedContact.customClosingMessage.trim()
-              : (settings.limitReachedClosingMessage && settings.limitReachedClosingMessage.trim() !== '')
-              ? settings.limitReachedClosingMessage.trim()
-              : 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke unke banaye huye  AI wasim bot se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much!';
+          if (reachedCapNow && !incResult.isFarewellSent) {
+            const closingText = resolveFarewellClosingMessage(matchedContact, settings);
 
-            console.log(`[Baileys] 🏁 Sending Auto-Closing Announcement to ${senderPhone}...`);
+            console.log(`[Baileys] 🏁 Sending Auto-Closing Announcement to ${senderPhone} (Limit ${updatedCount}/${effectiveLimit})...`);
 
             setTimeout(async () => {
               try {
@@ -920,6 +920,8 @@ async function initBaileys(forceRestart = false) {
                 await sock.sendPresenceUpdate('paused', senderJid);
                 await sock.sendMessage(senderJid, { text: closingText });
                 console.log(`[Baileys] ✅ Auto-Closing Announcement delivered to ${senderPhone}: "${closingText.substring(0, 60)}..."`);
+
+                await markContactFarewellSent(senderPhone, matchedContact);
 
                 await MessageLog.create({
                   sender: senderPhone,

@@ -23,6 +23,10 @@ const {
   resumeSession,
   getTodayDateString,
   runDailySessionArchiver,
+  getContactMessageCountInfo,
+  incrementContactMessageCount,
+  markContactFarewellSent,
+  resolveFarewellClosingMessage,
 } = require('../services/chatHistoryService');
 const { processGameTurn } = require('../services/gameService');
 const { analyzeAndTagContact } = require('../services/crmService');
@@ -410,23 +414,42 @@ const simulateIncoming = async (req, res) => {
     }
 
     // 2.4 Check Per-Contact & Global Max Message Limit (Auto-Cap Controller)
-    const effectiveLimit = matchedContact && typeof matchedContact.maxMessageLimit === 'number' && matchedContact.maxMessageLimit > 0
-      ? matchedContact.maxMessageLimit
-      : (settings.defaultMaxMessagesPerContact || 0);
+    const contactCountInfo = await getContactMessageCountInfo(sender, matchedContact, settings);
+    const effectiveLimit = contactCountInfo.effectiveLimit;
 
-    if (effectiveLimit > 0 && matchedContact && (matchedContact.messagesSentCount || 0) >= effectiveLimit) {
-      const log = await MessageLog.create({
-        sender,
-        messageIn: messageText,
-        messageOut: `[Auto-Cap Reached (${matchedContact.messagesSentCount}/${effectiveLimit}) - AI response skipped]`,
-        status: 'CAP_REACHED',
-      });
-      return res.json({
-        success: false,
-        status: 'CAP_REACHED',
-        message: `Max message limit reached (${matchedContact.messagesSentCount}/${effectiveLimit}) for ${sender}. AI responses paused.`,
-        log,
-      });
+    if (contactCountInfo.isCapReached) {
+      if (!contactCountInfo.isFarewellSent) {
+        const farewellText = resolveFarewellClosingMessage(matchedContact, settings);
+        await markContactFarewellSent(sender, matchedContact);
+        const log = await MessageLog.create({
+          sender,
+          messageIn: messageText,
+          messageOut: farewellText,
+          status: 'CAP_CLOSING_SENT',
+        });
+        await recordMessageExchange(sender, messageText, farewellText);
+        return res.json({
+          success: true,
+          status: 'CAP_CLOSING_SENT',
+          replyText: farewellText,
+          farewellSent: true,
+          message: `Max message limit reached (${contactCountInfo.currentCount}/${effectiveLimit}) for ${sender}. Final farewell message sent.`,
+          log,
+        });
+      } else {
+        const log = await MessageLog.create({
+          sender,
+          messageIn: messageText,
+          messageOut: `[Auto-Cap Reached (${contactCountInfo.currentCount}/${effectiveLimit}) - AI response skipped]`,
+          status: 'CAP_REACHED',
+        });
+        return res.json({
+          success: false,
+          status: 'CAP_REACHED',
+          message: `Max message limit reached (${contactCountInfo.currentCount}/${effectiveLimit}) for ${sender}. AI responses paused.`,
+          log,
+        });
+      }
     }
 
     // 2.5 Check if session is paused for Live Agent
@@ -693,30 +716,15 @@ const simulateIncoming = async (req, res) => {
     const whatsappResult = await sendWhatsAppMessage(sender, replyText);
 
     let closingMessageSent = null;
-    if (matchedContact) {
-      matchedContact.messagesSentCount = (matchedContact.messagesSentCount || 0) + 1;
-      const reachedCapNow = effectiveLimit > 0 && matchedContact.messagesSentCount >= effectiveLimit;
-      if (reachedCapNow) {
-        matchedContact.isCapReached = true;
-        matchedContact.capReachedAt = new Date();
-      }
-      try {
-        await matchedContact.save();
-      } catch (saveCountErr) {
-        console.warn('Simulation message count save note:', saveCountErr.message);
-      }
-
-      if (reachedCapNow && matchedContact.messagesSentCount === effectiveLimit) {
-        closingMessageSent = (matchedContact.customClosingMessage && matchedContact.customClosingMessage.trim() !== '')
-          ? matchedContact.customClosingMessage.trim()
-          : (settings.limitReachedClosingMessage && settings.limitReachedClosingMessage.trim() !== '')
-          ? settings.limitReachedClosingMessage.trim()
-          : 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke unke banaye huye  AI wasim bot se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much!';
-
+    if (effectiveLimit > 0) {
+      const incResult = await incrementContactMessageCount(sender, matchedContact, effectiveLimit);
+      if (incResult.reachedCapNow && !incResult.isFarewellSent) {
+        closingMessageSent = resolveFarewellClosingMessage(matchedContact, settings);
+        await markContactFarewellSent(sender, matchedContact);
         try {
           await MessageLog.create({
             sender,
-            messageIn: `[Auto-Cap Limit (${matchedContact.messagesSentCount}/${effectiveLimit}) Final Trigger]`,
+            messageIn: `[Auto-Cap Limit (${incResult.currentCount}/${effectiveLimit}) Final Trigger]`,
             messageOut: closingMessageSent,
             status: 'CAP_CLOSING_SENT',
           });
@@ -864,11 +872,11 @@ const resetAllMessageCounters = async (req, res) => {
   try {
     const r1 = await WhitelistContact.updateMany(
       {},
-      { $set: { messagesSentCount: 0, isCapReached: false, capReachedAt: null } }
+      { $set: { messagesSentCount: 0, isCapReached: false, isFarewellSent: false, capReachedAt: null } }
     );
     const r2 = await ChatSession.updateMany(
       {},
-      { $set: { messagesSentCount: 0, isCapReached: false, capReachedAt: null } }
+      { $set: { messagesSentCount: 0, isCapReached: false, isFarewellSent: false, capReachedAt: null } }
     );
     return res.json({
       success: true,

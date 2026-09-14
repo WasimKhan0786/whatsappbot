@@ -76,6 +76,10 @@ const chatSessionSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  isFarewellSent: {
+    type: Boolean,
+    default: false,
+  },
   capReachedAt: {
     type: Date,
     default: null,

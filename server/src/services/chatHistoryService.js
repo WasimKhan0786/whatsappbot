@@ -571,7 +571,7 @@ async function getActiveHandoffs() {
 /**
  * Gets or initializes message count for a session
  * @param {string} sessionId
- * @returns {Promise<{ messagesSentCount: number, isCapReached: boolean }>}
+ * @returns {Promise<{ messagesSentCount: number, isCapReached: boolean, isFarewellSent: boolean }>}
  */
 async function getSessionMessageCount(sessionId) {
   const cleanSessionId = sessionId.trim();
@@ -580,9 +580,10 @@ async function getSessionMessageCount(sessionId) {
     return {
       messagesSentCount: session?.messagesSentCount || 0,
       isCapReached: session?.isCapReached || false,
+      isFarewellSent: session?.isFarewellSent || false,
     };
   } catch (err) {
-    return { messagesSentCount: 0, isCapReached: false };
+    return { messagesSentCount: 0, isCapReached: false, isFarewellSent: false };
   }
 }
 
@@ -590,7 +591,7 @@ async function getSessionMessageCount(sessionId) {
  * Increments messages sent count for a session and checks if limit reached
  * @param {string} sessionId
  * @param {number} effectiveLimit
- * @returns {Promise<{ currentCount: number, reachedCapNow: boolean }>}
+ * @returns {Promise<{ currentCount: number, reachedCapNow: boolean, isFarewellSent: boolean }>}
  */
 async function incrementSessionMessageCount(sessionId, effectiveLimit = 0) {
   const cleanSessionId = sessionId.trim();
@@ -603,17 +604,168 @@ async function incrementSessionMessageCount(sessionId, effectiveLimit = 0) {
     const reachedCapNow = effectiveLimit > 0 && session.messagesSentCount >= effectiveLimit;
     if (reachedCapNow) {
       session.isCapReached = true;
-      session.capReachedAt = new Date();
+      if (!session.capReachedAt) {
+        session.capReachedAt = new Date();
+      }
     }
     session.updatedAt = new Date();
     await session.save();
     return {
       currentCount: session.messagesSentCount,
       reachedCapNow,
+      isFarewellSent: Boolean(session.isFarewellSent),
     };
   } catch (err) {
     console.warn(`[ChatHistoryService] Error updating session count for ${sessionId}:`, err.message);
-    return { currentCount: 1, reachedCapNow: false };
+    return { currentCount: 1, reachedCapNow: false, isFarewellSent: false };
+  }
+}
+
+/**
+ * Resolves the configured farewell message:
+ * 1. Contact-specific customClosingMessage (if configured)
+ * 2. Settings limitReachedClosingMessage (if configured)
+ * 3. Default farewell message
+ */
+function resolveFarewellClosingMessage(matchedContact, settings = {}) {
+  if (matchedContact?.customClosingMessage && matchedContact.customClosingMessage.trim() !== '') {
+    return matchedContact.customClosingMessage.trim();
+  }
+  if (settings?.limitReachedClosingMessage && settings.limitReachedClosingMessage.trim() !== '') {
+    return settings.limitReachedClosingMessage.trim();
+  }
+  return 'Aapse baat karke bohot achha laga! 😊 Waise abhi tak aap Wasim Khan ke unke banaye huye  AI wasim bot se baat kar rahe the. Filhaal Wasim bhai thoda busy hain, jaise hi wo free honge aapse direct personally contact karenge. Thank you so much!';
+}
+
+/**
+ * Retrieves per-contact message count, cap limit, and farewell status
+ * @param {string} contactPhone
+ * @param {object|null} matchedContact
+ * @param {object} settings
+ * @returns {Promise<{ effectiveLimit: number, currentCount: number, isCapReached: boolean, isFarewellSent: boolean }>}
+ */
+async function getContactMessageCountInfo(contactPhone, matchedContact = null, settings = {}) {
+  const cleanPhone = (contactPhone || '').trim();
+  const effectiveLimit = matchedContact && typeof matchedContact.maxMessageLimit === 'number' && matchedContact.maxMessageLimit > 0
+    ? matchedContact.maxMessageLimit
+    : (settings?.defaultMaxMessagesPerContact || 0);
+
+  let currentCount = 0;
+  let isFarewellSent = false;
+  let isCapReached = false;
+
+  if (matchedContact) {
+    currentCount = matchedContact.messagesSentCount || 0;
+    isFarewellSent = Boolean(matchedContact.isFarewellSent);
+    isCapReached = Boolean(matchedContact.isCapReached) || (effectiveLimit > 0 && currentCount >= effectiveLimit);
+  } else if (cleanPhone) {
+    try {
+      const session = await ChatSession.findOne({ sessionId: cleanPhone });
+      currentCount = session?.messagesSentCount || 0;
+      isFarewellSent = Boolean(session?.isFarewellSent);
+      isCapReached = Boolean(session?.isCapReached) || (effectiveLimit > 0 && currentCount >= effectiveLimit);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  return {
+    effectiveLimit,
+    currentCount,
+    isCapReached,
+    isFarewellSent,
+  };
+}
+
+/**
+ * Increments the message count for this contact separately and checks if cap is reached
+ * @param {string} contactPhone
+ * @param {object|null} matchedContact
+ * @param {number} effectiveLimit
+ * @returns {Promise<{ currentCount: number, reachedCapNow: boolean, isFarewellSent: boolean }>}
+ */
+async function incrementContactMessageCount(contactPhone, matchedContact = null, effectiveLimit = 0) {
+  const cleanPhone = (contactPhone || '').trim();
+  let currentCount = 0;
+  let reachedCapNow = false;
+  let isFarewellSent = false;
+
+  if (matchedContact) {
+    matchedContact.messagesSentCount = (matchedContact.messagesSentCount || 0) + 1;
+    currentCount = matchedContact.messagesSentCount;
+    reachedCapNow = effectiveLimit > 0 && currentCount >= effectiveLimit;
+    if (reachedCapNow) {
+      matchedContact.isCapReached = true;
+      if (!matchedContact.capReachedAt) matchedContact.capReachedAt = new Date();
+    }
+    isFarewellSent = Boolean(matchedContact.isFarewellSent);
+    try {
+      await matchedContact.save();
+    } catch (e) {
+      console.warn(`[ChatHistoryService] Error saving contact count for ${cleanPhone}:`, e.message);
+    }
+    // Also sync to ChatSession so history session stays consistent
+    if (cleanPhone) {
+      try {
+        await ChatSession.findOneAndUpdate(
+          { sessionId: cleanPhone },
+          {
+            $set: {
+              messagesSentCount: currentCount,
+              isCapReached: Boolean(matchedContact.isCapReached),
+              capReachedAt: matchedContact.capReachedAt || (reachedCapNow ? new Date() : null),
+              updatedAt: new Date(),
+            },
+          },
+          { upsert: true }
+        );
+      } catch (sessSyncErr) {}
+    }
+  } else if (cleanPhone) {
+    const incResult = await incrementSessionMessageCount(cleanPhone, effectiveLimit);
+    currentCount = incResult.currentCount;
+    reachedCapNow = incResult.reachedCapNow;
+    isFarewellSent = Boolean(incResult.isFarewellSent);
+  }
+
+  return {
+    currentCount,
+    reachedCapNow,
+    isFarewellSent,
+  };
+}
+
+/**
+ * Marks that the farewell closing announcement has been delivered to this contact
+ * @param {string} contactPhone
+ * @param {object|null} matchedContact
+ */
+async function markContactFarewellSent(contactPhone, matchedContact = null) {
+  const cleanPhone = (contactPhone || '').trim();
+  const now = new Date();
+  if (matchedContact) {
+    matchedContact.isFarewellSent = true;
+    matchedContact.isCapReached = true;
+    if (!matchedContact.capReachedAt) matchedContact.capReachedAt = now;
+    try {
+      await matchedContact.save();
+    } catch (e) {}
+  }
+  if (cleanPhone) {
+    try {
+      await ChatSession.updateOne(
+        { sessionId: cleanPhone },
+        {
+          $set: {
+            isFarewellSent: true,
+            isCapReached: true,
+            capReachedAt: now,
+            updatedAt: now,
+          },
+        },
+        { upsert: true }
+      );
+    } catch (e) {}
   }
 }
 
@@ -633,6 +785,10 @@ module.exports = {
   getActiveHandoffs,
   getSessionMessageCount,
   incrementSessionMessageCount,
+  getContactMessageCountInfo,
+  incrementContactMessageCount,
+  markContactFarewellSent,
+  resolveFarewellClosingMessage,
   getTodayDateString,
   getStartOfToday,
   runDailySessionArchiver,

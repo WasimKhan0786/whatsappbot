@@ -109,6 +109,10 @@ const whitelistContactSchema = new mongoose.Schema({
     default: false,
     index: true,
   },
+  isFarewellSent: {
+    type: Boolean,
+    default: false,
+  },
   capReachedAt: {
     type: Date,
     default: null,

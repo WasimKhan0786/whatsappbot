@@ -239,6 +239,7 @@ async function resetMessageCounter(req, res) {
 
     contact.messagesSentCount = 0;
     contact.isCapReached = false;
+    contact.isFarewellSent = false;
     contact.capReachedAt = null;
     await contact.save();
 
@@ -249,7 +250,7 @@ async function resetMessageCounter(req, res) {
       if (cleanDigits) {
         await ChatSession.updateMany(
           { sessionId: { $regex: cleanDigits } },
-          { $set: { messagesSentCount: 0, isCapReached: false, capReachedAt: null } }
+          { $set: { messagesSentCount: 0, isCapReached: false, isFarewellSent: false, capReachedAt: null } }
         );
       }
     } catch (sessionErr) {
@@ -283,6 +284,7 @@ async function setContactMessageLimit(req, res) {
       // If limit increased above current sent count or set to unlimited (0), unblock cap
       if (parsedLimit === 0 || parsedLimit > contact.messagesSentCount) {
         contact.isCapReached = false;
+        contact.isFarewellSent = false;
         contact.capReachedAt = null;
       } else if (contact.messagesSentCount >= parsedLimit && parsedLimit > 0) {
         contact.isCapReached = true;
