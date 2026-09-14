@@ -72,6 +72,41 @@ const {
   extractWeatherQuery,
   formatWeatherForWhatsApp,
 } = require('./weatherService');
+const {
+  transcribeAudioWithDeepgram,
+  synthesizeVoiceNote,
+  shouldReplyWithVoice,
+} = require('./speechService');
+const {
+  searchWebLive,
+  extractLiveSearchQuery,
+  formatSearchSummaryForWhatsApp,
+} = require('./webSearchService');
+const {
+  searchSpotifyTracks,
+  extractSongQuery,
+  formatSpotifyCardForWhatsApp,
+} = require('./spotifyService');
+const {
+  extractUrlsFromText,
+  isSafetyCheckRequested,
+  scanUrlSafety,
+  formatSafetyReportForWhatsApp,
+} = require('./securityScanService');
+const {
+  extractFinanceQuery,
+  fetchMarketRate,
+  formatFinanceReportForWhatsApp,
+} = require('./financeService');
+const {
+  extractRecipeQuery,
+  fetchRecipe,
+  formatRecipeForWhatsApp,
+} = require('./recipeService');
+const {
+  isBackgroundRemovalRequested,
+  removeImageBackground,
+} = require('./backgroundRemovalService');
 
 // State variables
 let sock = null;
@@ -667,6 +702,49 @@ async function initBaileys(forceRestart = false) {
               );
 
               if (mediaBuffer && mediaBuffer.length > 0) {
+                // 🎙️ Transcribe incoming voice notes & audio messages with Deepgram Nova-2
+                if (mediaDetails.type === 'audio') {
+                  try {
+                    const trans = await transcribeAudioWithDeepgram(mediaBuffer, mediaDetails.mimeType);
+                    if (trans.success && trans.transcript) {
+                      messageText = trans.transcript;
+                      console.log(`[Baileys] 🎙️ Audio transcribed via Deepgram: "${messageText}"`);
+                    }
+                  } catch (transErr) {
+                    console.warn('[Baileys] Deepgram transcription note:', transErr.message);
+                  }
+                }
+
+                // ✂️ Intercept photo background removal request ("background hata do" / "/bgremove")
+                if (mediaDetails.type === 'image' && isBackgroundRemovalRequested(messageText, mediaDetails)) {
+                  console.log(`[Baileys] ✂️ Photo background removal requested by ${senderPhone}...`);
+                  try {
+                    const bgRes = await removeImageBackground(mediaBuffer);
+                    if (bgRes.success && bgRes.transparentBuffer) {
+                      await sock.sendMessage(senderJid, {
+                        image: bgRes.transparentBuffer,
+                        mimetype: 'image/png',
+                        caption: '✅ *Background Successfully Removed!* (Transparent PNG)',
+                      });
+                      console.log(`[Baileys] ✅ Transparent PNG delivered to ${senderPhone}`);
+                      await MessageLog.create({
+                        sender: senderPhone,
+                        messageIn: messageText,
+                        messageOut: '[Background Removed - Transparent PNG sent]',
+                        status: 'IMAGE_BG_REMOVED',
+                        routingCategory: 'IMAGE_TOOL',
+                        routingIntent: 'REMOVE_BG',
+                        metaMessageId: msg.key.id || `baileys_${Date.now()}`,
+                      });
+                      continue;
+                    } else if (bgRes.isQuotaExhausted) {
+                      replyText = '⚠️ *Photo Background Remover:*\nBackground removal free quota is currently exhausted. Hum jald hi nayi credits add karenge!';
+                    }
+                  } catch (bgErr) {
+                    console.warn('[Baileys] Background removal error:', bgErr.message);
+                  }
+                }
+
                 processedMedia = await processIncomingMedia({
                   buffer: mediaBuffer,
                   mimeType: mediaDetails.mimeType,
@@ -900,6 +978,94 @@ async function initBaileys(forceRestart = false) {
             }
           }
 
+          // 🛡️ 7. VIRUSTOTAL URL SECURITY & SAFETY SCANNER
+          if (!replyText) {
+            const detectedUrls = extractUrlsFromText(messageText);
+            if (detectedUrls.length > 0 && isSafetyCheckRequested(messageText)) {
+              console.log(`[Baileys] 🛡️ Link security check requested by ${senderPhone} for: ${detectedUrls[0]}`);
+              try {
+                const scanReport = await scanUrlSafety(detectedUrls[0]);
+                replyText = formatSafetyReportForWhatsApp(scanReport);
+                routingCategory = 'SECURITY';
+                routingIntent = 'VIRUSTOTAL_URL_SCAN';
+              } catch (vtErr) {
+                console.error('[Baileys] VirusTotal scan error:', vtErr.message);
+              }
+            }
+          }
+
+          // 🎵 8. SPOTIFY MUSIC & SONG DISCOVERY INTERCEPT
+          if (!replyText) {
+            const musicReq = extractSongQuery(messageText);
+            if (musicReq.isMusicRequest && musicReq.query) {
+              console.log(`[Baileys] 🎵 Music request identified from ${senderPhone}: "${musicReq.query}"`);
+              try {
+                const spotifyData = await searchSpotifyTracks(musicReq.query, 3);
+                if (spotifyData.success && spotifyData.tracks && spotifyData.tracks.length > 0) {
+                  replyText = formatSpotifyCardForWhatsApp(spotifyData.tracks, musicReq.query);
+                  routingCategory = 'SPOTIFY_MUSIC';
+                  routingIntent = `SONG:${musicReq.query.substring(0, 30)}`;
+                }
+              } catch (spotErr) {
+                console.error('[Baileys] Spotify search error:', spotErr.message);
+              }
+            }
+          }
+
+          // 🌐 9. LIVE AI WEB SEARCH INTERCEPT (Tavily + Serper)
+          if (!replyText) {
+            const liveSearchReq = extractLiveSearchQuery(messageText);
+            if (liveSearchReq.isSearchRequest && liveSearchReq.query) {
+              console.log(`[Baileys] 🌐 Live web search request from ${senderPhone}: "${liveSearchReq.query}"`);
+              try {
+                const searchResults = await searchWebLive(liveSearchReq.query);
+                if (searchResults.success) {
+                  replyText = formatSearchSummaryForWhatsApp(searchResults, liveSearchReq.query);
+                  routingCategory = 'LIVE_SEARCH';
+                  routingIntent = `LIVE_SEARCH:${liveSearchReq.query.substring(0, 30)}`;
+                }
+              } catch (liveSearchErr) {
+                console.error('[Baileys] Live search error:', liveSearchErr.message);
+              }
+            }
+          }
+
+          // 💹 10. REAL-TIME FINANCIAL MARKETS & CRYPTO RATES INTERCEPT
+          if (!replyText) {
+            const finReq = extractFinanceQuery(messageText);
+            if (finReq.isFinanceRequest) {
+              console.log(`[Baileys] 💹 Financial market request from ${senderPhone}: [${finReq.type}:${finReq.symbol}]`);
+              try {
+                const marketRate = await fetchMarketRate(finReq);
+                if (marketRate.success) {
+                  replyText = formatFinanceReportForWhatsApp(marketRate, finReq.query);
+                  routingCategory = 'FINANCE';
+                  routingIntent = `MARKET_RATE:${finReq.symbol}`;
+                }
+              } catch (finErr) {
+                console.error('[Baileys] Financial rate fetch error:', finErr.message);
+              }
+            }
+          }
+
+          // 🍳 11. SPOONACULAR RECIPES & COOKING ASSISTANT
+          if (!replyText) {
+            const recipeReq = extractRecipeQuery(messageText);
+            if (recipeReq.isRecipeRequest && recipeReq.dish) {
+              console.log(`[Baileys] 🍳 Recipe request from ${senderPhone}: "${recipeReq.dish}"`);
+              try {
+                const recipeData = await fetchRecipe(recipeReq.dish);
+                if (recipeData.success) {
+                  replyText = formatRecipeForWhatsApp(recipeData, recipeReq.dish);
+                  routingCategory = 'RECIPE';
+                  routingIntent = `RECIPE:${recipeReq.dish.substring(0, 30)}`;
+                }
+              } catch (recErr) {
+                console.error('[Baileys] Recipe fetch error:', recErr.message);
+              }
+            }
+          }
+
           // Message Classification & Routing (Routine vs Complex)
           if (!replyText && !processedMedia) {
             try {
@@ -1009,7 +1175,9 @@ async function initBaileys(forceRestart = false) {
             // non-fatal
           }
 
-          // STEP 4: Natural Delivery (Dispatch WhatsApp Message or Image)
+          // STEP 4: Natural Delivery (Dispatch WhatsApp Message, Image, or Voice Note)
+          const isVoiceDesired = shouldReplyWithVoice(messageText, mediaDetails?.type === 'audio');
+
           if (generatedImageResult && generatedImageResult.buffer) {
             // Upload generated AI image to Cloudflare R2 cloud storage
             uploadMediaToR2(generatedImageResult.buffer, `flux_${Date.now()}.jpg`, 'image/jpeg', 'generated').catch(() => {});
@@ -1019,6 +1187,28 @@ async function initBaileys(forceRestart = false) {
               caption: replyText,
             });
             console.log(`[Anti-Ban Shield] 🎨 Native AI Image delivered to ${senderPhone}: "${generatedImageResult.prompt}"`);
+          } else if (isVoiceDesired) {
+            // Synthesize and send ultra-realistic voice note reply via Murf AI / ElevenLabs
+            console.log(`[Baileys] 🗣️ Voice reply desired. Synthesizing audio voice note for ${senderPhone}...`);
+            let voiceDelivered = false;
+            try {
+              const voiceRes = await synthesizeVoiceNote(replyText);
+              if (voiceRes.success && voiceRes.audioBuffer) {
+                await sock.sendMessage(senderJid, {
+                  audio: voiceRes.audioBuffer,
+                  mimetype: 'audio/mp4',
+                  ptt: true,
+                });
+                console.log(`[Anti-Ban Shield] 🎙️ Native WhatsApp Voice Note delivered to ${senderPhone} (${voiceRes.provider})`);
+                voiceDelivered = true;
+              }
+            } catch (vSendErr) {
+              console.warn('[Baileys] Voice note delivery notice:', vSendErr.message);
+            }
+
+            // Deliver text transcript alongside voice or as fallback
+            await sock.sendMessage(senderJid, { text: replyText });
+            console.log(`[Anti-Ban Shield] ✅ Message naturally delivered to ${senderPhone}: "${replyText.substring(0, 75)}..."`);
           } else {
             await sock.sendMessage(senderJid, { text: replyText });
             console.log(`[Anti-Ban Shield] ✅ Message naturally delivered to ${senderPhone}: "${replyText.substring(0, 75)}..."`);

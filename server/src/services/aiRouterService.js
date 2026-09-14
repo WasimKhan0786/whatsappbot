@@ -3,6 +3,9 @@ const { generateGroqReply, isGroqAvailable } = require('./groqService');
 const { generateCloudflareReply } = require('./cloudflareAiService');
 const { queryRelevantHistory, formatSemanticContextForPrompt } = require('./pineconeService');
 const { fetchCurrentWeather, extractWeatherQuery } = require('./weatherService');
+const { searchWebLive, extractLiveSearchQuery } = require('./webSearchService');
+const { extractFinanceQuery, fetchMarketRate } = require('./financeService');
+const { extractRecipeQuery, fetchRecipe } = require('./recipeService');
 
 /**
  * Classifies whether an incoming query is routine/lightweight or complex/multilingual
@@ -40,9 +43,10 @@ function classifyQueryComplexity(text, mediaPayload = null) {
 /**
  * Intelligent Multi-Model AI Orchestrator:
  * 1. Queries Pinecone vector memory for relevant past context.
- * 2. Routes routine queries to Groq for ultra-fast replies (or Cloudflare Workers AI).
- * 3. Reserves Google Gemini for complex reasoning, multilingual subtleties, and media.
- * 4. Ensures graceful fallbacks so a high-quality reply is always produced.
+ * 2. Injects real-time grounding (Weather, Live Search, Finance, Recipes).
+ * 3. Routes routine queries to Groq for ultra-fast replies (or Cloudflare Workers AI).
+ * 4. Reserves Google Gemini for complex reasoning, multilingual subtleties, and media.
+ * 5. Ensures graceful fallbacks so a high-quality reply is always produced.
  *
  * @param {object} options
  * @param {string} options.userMessage - Incoming message text
@@ -83,6 +87,40 @@ async function routeAndGenerateAiReply({
     }
   } catch (wErr) {}
 
+  // 1c. Live AI Web Search Grounding (Tavily + Serper)
+  try {
+    const searchExtraction = extractLiveSearchQuery(userMessage);
+    if (searchExtraction.isSearchRequest && searchExtraction.query) {
+      const liveSearch = await searchWebLive(searchExtraction.query);
+      if (liveSearch.success) {
+        const topSnippets = liveSearch.results.map((r) => `${r.title}: ${r.snippet}`).join(' | ');
+        semanticContext = `${semanticContext}\n\n[VERIFIED LIVE WEB SEARCH for "${searchExtraction.query}"]: Direct Answer: "${liveSearch.answer || 'N/A'}". Web Updates: ${topSnippets}. Use this fresh verified web data to answer!`;
+      }
+    }
+  } catch (searchErr) {}
+
+  // 1d. Financial Market & Crypto Grounding
+  try {
+    const finReq = extractFinanceQuery(userMessage);
+    if (finReq.isFinanceRequest) {
+      const liveFin = await fetchMarketRate(finReq);
+      if (liveFin.success) {
+        semanticContext = `${semanticContext}\n\n[VERIFIED LIVE FINANCIAL DATA for ${liveFin.name}]: INR Price: ₹${liveFin.priceInr || 'N/A'}, USD Price: $${liveFin.priceUsd || 'N/A'}, 24h Change: ${liveFin.change24h}%. Answer with this verified data!`;
+      }
+    }
+  } catch (finErr) {}
+
+  // 1e. Recipe Context Grounding (Spoonacular)
+  try {
+    const recipeReq = extractRecipeQuery(userMessage);
+    if (recipeReq.isRecipeRequest && recipeReq.dish) {
+      const liveRecipe = await fetchRecipe(recipeReq.dish);
+      if (liveRecipe.success) {
+        semanticContext = `${semanticContext}\n\n[VERIFIED RECIPE DATA for ${liveRecipe.title}]: Cook Time: ${liveRecipe.readyInMinutes}m, Ingredients: ${liveRecipe.ingredients.slice(0, 6).join(', ')}. Steps: ${liveRecipe.instructions.slice(0, 3).join(' ')}`;
+      }
+    }
+  } catch (recipeErr) {}
+
   // 2. Classify query complexity
   const queryComplexity = classifyQueryComplexity(userMessage, mediaPayload);
   console.log(`[AI Router] 🧭 Query Complexity classified as: [${queryComplexity}] for ${targetSender}`);
@@ -94,7 +132,7 @@ async function routeAndGenerateAiReply({
   if (queryComplexity === 'ROUTINE' && !mediaPayload) {
     if (isGroqAvailable()) {
       try {
-        console.log(`[AI Router] ⚡ Routing routine query to Groq (Llama-3.1)...`);
+        console.log(`[AI Router] ⚡ Routing routine query to Groq (Llama-3.3-70b)...`);
         replyText = await generateGroqReply(userMessage, dynamicPrompt, chatHistory, semanticContext);
         if (replyText) {
           chosenProvider = 'GROQ';

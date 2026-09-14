@@ -65,6 +65,37 @@ const {
   extractWeatherQuery,
   formatWeatherForWhatsApp,
 } = require('../services/weatherService');
+const {
+  searchWebLive,
+  extractLiveSearchQuery,
+  formatSearchSummaryForWhatsApp,
+} = require('../services/webSearchService');
+const {
+  searchSpotifyTracks,
+  extractSongQuery,
+  formatSpotifyCardForWhatsApp,
+} = require('../services/spotifyService');
+const {
+  extractUrlsFromText,
+  isSafetyCheckRequested,
+  scanUrlSafety,
+  formatSafetyReportForWhatsApp,
+} = require('../services/securityScanService');
+const {
+  extractFinanceQuery,
+  fetchMarketRate,
+  formatFinanceReportForWhatsApp,
+} = require('../services/financeService');
+const {
+  extractRecipeQuery,
+  fetchRecipe,
+  formatRecipeForWhatsApp,
+} = require('../services/recipeService');
+const {
+  synthesizeVoiceNote,
+  transcribeAudioWithDeepgram,
+} = require('../services/speechService');
+
 
 /**
  * GET /api/settings
@@ -1272,6 +1303,114 @@ const getWeatherEndpoint = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/search/live
+ * POST /api/search/live
+ * Live AI Web Search (Tavily + Serper)
+ */
+const testLiveSearchEndpoint = async (req, res) => {
+  try {
+    const query = req.body?.q || req.body?.query || req.query?.q || 'India cricket score';
+    const searchData = await searchWebLive(query);
+    return res.json({
+      ...searchData,
+      whatsappFormatted: formatSearchSummaryForWhatsApp(searchData, query),
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+/**
+ * GET /api/music/spotify
+ * POST /api/music/spotify
+ * Spotify Music & Track Discovery
+ */
+const testSpotifyEndpoint = async (req, res) => {
+  try {
+    const query = req.body?.q || req.body?.query || req.query?.q || 'Arijit Singh Kesariya';
+    const spotifyData = await searchSpotifyTracks(query, 3);
+    return res.json({
+      ...spotifyData,
+      whatsappFormatted: formatSpotifyCardForWhatsApp(spotifyData.tracks, query),
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+/**
+ * POST /api/security/scan
+ * VirusTotal URL Safety Scanner
+ */
+const testSecurityScanEndpoint = async (req, res) => {
+  try {
+    const url = req.body?.url || req.query?.url || 'https://google.com';
+    const scanReport = await scanUrlSafety(url);
+    return res.json({
+      ...scanReport,
+      whatsappFormatted: formatSafetyReportForWhatsApp(scanReport),
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+/**
+ * GET /api/finance/rates
+ * Stock Market, Crypto & Gold Rates
+ */
+const testFinanceEndpoint = async (req, res) => {
+  try {
+    const query = req.body?.q || req.query?.q || 'bitcoin';
+    const finReq = extractFinanceQuery(query);
+    const rateData = await fetchMarketRate(finReq);
+    return res.json({
+      ...rateData,
+      whatsappFormatted: formatFinanceReportForWhatsApp(rateData, query),
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+/**
+ * GET /api/recipes/search
+ * Spoonacular Culinary Recipe Assistant
+ */
+const testRecipeEndpoint = async (req, res) => {
+  try {
+    const dish = req.body?.dish || req.query?.dish || 'biryani';
+    const recipeData = await fetchRecipe(dish);
+    return res.json({
+      ...recipeData,
+      whatsappFormatted: formatRecipeForWhatsApp(recipeData, dish),
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+/**
+ * POST /api/speech/tts
+ * Voice Note Synthesis (Murf AI / ElevenLabs)
+ */
+const testSpeechEndpoint = async (req, res) => {
+  try {
+    const text = req.body?.text || 'Namaste! Main aapka WhatsApp AI Voice Assistant hoon.';
+    const voiceResult = await synthesizeVoiceNote(text);
+    return res.json({
+      success: voiceResult.success,
+      provider: voiceResult.provider,
+      hasAudioBuffer: Boolean(voiceResult.audioBuffer),
+      audioSizeBytes: voiceResult.audioBuffer?.length || 0,
+      audioUrl: voiceResult.audioUrl,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 module.exports = {
   getSettings,
   updateSettings,
@@ -1299,6 +1438,13 @@ module.exports = {
   getNasaApodEndpoint,
   getNasaAsteroidsEndpoint,
   getWeatherEndpoint,
+  testLiveSearchEndpoint,
+  testSpotifyEndpoint,
+  testSecurityScanEndpoint,
+  testFinanceEndpoint,
+  testRecipeEndpoint,
+  testSpeechEndpoint,
 };
+
 
 

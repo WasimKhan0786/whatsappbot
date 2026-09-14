@@ -1,5 +1,21 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
+let currentGeminiKeyIndex = 0;
+
+function getGeminiKeyPool() {
+  const rawPool = process.env.GEMINI_KEYS || '';
+  const singleKey = process.env.GEMINI_API_KEY || '';
+
+  const keys = [
+    ...rawPool.split(/[,;\n\s]+/),
+    singleKey,
+  ]
+    .map((k) => k.trim())
+    .filter((k) => k.length > 10 && !k.includes('your_') && !k.includes('YOUR_'));
+
+  return [...new Set(keys)];
+}
+
 /**
  * Generate a polite response using Google Gemini API with optional media processing and style mirroring
  * @param {string} userMessage - Text sent by the user
@@ -10,7 +26,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
  * @returns {Promise<string>} - Polite AI generated response mirroring original content & style
  */
 async function generateGeminiReply(userMessage, customSystemPrompt, chatHistory = [], mediaPayload = null, semanticContext = '') {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const keyPool = getGeminiKeyPool();
 
   const defaultPrompt =
     'Tumhe bilkul ek aam real insaan ki tarah WhatsApp par chat karni hai, kisi AI bot ki tarah nahi. Kabhi mat bolna ki main AI assistant hoon.\n\n' +
@@ -69,7 +85,6 @@ async function generateGeminiReply(userMessage, customSystemPrompt, chatHistory 
     const promptString = [actionPrompt, mediaSection, styleDirective].filter(Boolean).join('\n\n').trim();
 
     if (mediaPayload.inlineData) {
-      // Multimodal payload: compressed image / audio + prompt text
       contentParts = [
         promptString,
         {
@@ -80,15 +95,14 @@ async function generateGeminiReply(userMessage, customSystemPrompt, chatHistory 
         },
       ];
     } else {
-      // Token-efficient pure text payload
       contentParts = promptString;
     }
   } else {
     contentParts = userText;
   }
 
-  // Graceful fallback if API key is not yet set by the user
-  if (!apiKey || apiKey.trim() === '' || apiKey === 'YOUR_GEMINI_API_KEY') {
+  // Fallback if no keys available
+  if (keyPool.length === 0) {
     console.warn('⚠️ GEMINI_API_KEY is not configured in .env. Returning polite fallback message.');
     return `Hello! Thank you for reaching out. We received your message: "${userText || 'Media File'}". ` +
       `(Note: Google Gemini API key is not yet configured in server .env file. Please add your GEMINI_API_KEY to enable live AI replies).`;
@@ -104,52 +118,58 @@ async function generateGeminiReply(userMessage, customSystemPrompt, chatHistory 
     'gemini-3.8-flash',
   ];
 
-  const genAI = new GoogleGenerativeAI(apiKey);
   let lastError = null;
 
-  for (const modelName of CANDIDATE_MODELS) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        systemInstruction: systemInstruction,
-      });
+  // Try across available keys in pool
+  for (let keyAttempt = 0; keyAttempt < keyPool.length; keyAttempt++) {
+    const keyIdx = (currentGeminiKeyIndex + keyAttempt) % keyPool.length;
+    const activeApiKey = keyPool[keyIdx];
+    const genAI = new GoogleGenerativeAI(activeApiKey);
 
-      let replyText = '';
+    for (const modelName of CANDIDATE_MODELS) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          systemInstruction: systemInstruction,
+        });
 
-      // If multi-turn chat history is provided, start a contextual chat session
-      if (Array.isArray(chatHistory) && chatHistory.length > 0) {
-        try {
-          const chat = model.startChat({
-            history: chatHistory,
-          });
-          const result = await chat.sendMessage(contentParts);
-          const response = await result.response;
-          replyText = response.text();
-        } catch (chatErr) {
-          console.warn(`[Gemini] Multi-turn chat failed on ${modelName} (${chatErr.message.substring(0, 60)}). Falling back to direct prompt...`);
-          // Fallback to direct generateContent
+        let replyText = '';
+
+        if (Array.isArray(chatHistory) && chatHistory.length > 0) {
+          try {
+            const chat = model.startChat({ history: chatHistory });
+            const result = await chat.sendMessage(contentParts);
+            const response = await result.response;
+            replyText = response.text();
+          } catch (chatErr) {
+            const result = await model.generateContent(contentParts);
+            const response = await result.response;
+            replyText = response.text();
+          }
+        } else {
           const result = await model.generateContent(contentParts);
           const response = await result.response;
           replyText = response.text();
         }
-      } else {
-        // Direct single-turn prompt
-        const result = await model.generateContent(contentParts);
-        const response = await result.response;
-        replyText = response.text();
-      }
 
-      if (replyText && replyText.trim() !== '') {
-        return replyText.trim();
+        if (replyText && replyText.trim() !== '') {
+          currentGeminiKeyIndex = keyIdx; // Remember healthy key
+          return replyText.trim();
+        }
+      } catch (error) {
+        lastError = error;
+        const msg = error.message || '';
+        const isQuota = msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED');
+        if (isQuota) {
+          console.warn(`[Gemini] Key #${keyIdx + 1} quota/rate-limited on ${modelName}. Rotating to next key...`);
+          break; // Break model loop to rotate key
+        }
+        continue;
       }
-    } catch (error) {
-      console.warn(`[Gemini] Model ${modelName} encountered: ${error.message.substring(0, 90)}. Trying next candidate model...`);
-      lastError = error;
-      continue;
     }
   }
 
-  console.error('All Gemini candidate models exhausted. Last error:', lastError?.message);
+  console.error('All Gemini keys and candidate models exhausted. Last error:', lastError?.message);
   throw new Error(`Gemini AI service error: ${lastError?.message}`);
 }
 

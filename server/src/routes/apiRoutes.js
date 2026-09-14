@@ -27,6 +27,12 @@ const {
   getNasaApodEndpoint,
   getNasaAsteroidsEndpoint,
   getWeatherEndpoint,
+  testLiveSearchEndpoint,
+  testSpotifyEndpoint,
+  testSecurityScanEndpoint,
+  testFinanceEndpoint,
+  testRecipeEndpoint,
+  testSpeechEndpoint,
 } = require('../controllers/settingsController');
 
 const {
@@ -130,5 +136,27 @@ router.get('/nasa/asteroids', getNasaAsteroidsEndpoint);
 // OpenWeatherMap Real-Time Weather Forecast Integration
 router.get('/weather', getWeatherEndpoint);
 router.post('/weather/test', getWeatherEndpoint);
+
+// Live AI Web Search (Tavily + Serper)
+router.get('/search/live', testLiveSearchEndpoint);
+router.post('/search/live', testLiveSearchEndpoint);
+
+// Spotify Music Discovery
+router.get('/music/spotify', testSpotifyEndpoint);
+router.post('/music/spotify', testSpotifyEndpoint);
+
+// VirusTotal URL Safety Scanner
+router.post('/security/scan', testSecurityScanEndpoint);
+
+// Financial Markets, Crypto & Stocks
+router.get('/finance/rates', testFinanceEndpoint);
+router.post('/finance/rates', testFinanceEndpoint);
+
+// Spoonacular Recipes & Cooking
+router.get('/recipes/search', testRecipeEndpoint);
+router.post('/recipes/search', testRecipeEndpoint);
+
+// Voice Note Audio Synthesis (Murf AI / ElevenLabs)
+router.post('/speech/tts', testSpeechEndpoint);
 
 module.exports = router;
