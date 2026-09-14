@@ -4,6 +4,7 @@ const WhitelistContact = require('../models/WhitelistContact');
 const ChatSession = require('../models/ChatSession');
 const RoutineTemplate = require('../models/RoutineTemplate');
 const { generateGeminiReply } = require('../services/geminiService');
+const { routeAndGenerateAiReply } = require('../services/aiRouterService');
 const { sendWhatsAppMessage } = require('../services/whatsappService');
 const { classifyMessage } = require('../services/messageRoutingService');
 const { detectProfanity, handleProfanityStrike } = require('../services/profanityService');
@@ -667,19 +668,14 @@ const simulateIncoming = async (req, res) => {
         );
         const chatHistory = await getGeminiChatHistory(sender);
 
-        let pineconeSemanticContext = '';
-        try {
-          const pastMatches = await queryRelevantHistory(sender, messageText);
-          pineconeSemanticContext = formatSemanticContextForPrompt(pastMatches);
-        } catch (pinErr) {}
-
-        replyText = await generateGeminiReply(
-          messageText,
+        const routerResult = await routeAndGenerateAiReply({
+          userMessage: messageText,
+          sender,
           dynamicPrompt,
           chatHistory,
-          null,
-          pineconeSemanticContext
-        );
+          mediaPayload: null,
+        });
+        replyText = routerResult.replyText;
         await resetFailedAttempts(sender);
 
         const geminiImageMatch = replyText && replyText.match(/\[GENERATE_IMAGE:\s*([^\]]+)\]/i);

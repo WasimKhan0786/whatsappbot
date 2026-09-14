@@ -53,6 +53,8 @@ const {
   queryRelevantHistory,
   formatSemanticContextForPrompt,
 } = require('./pineconeService');
+const { routeAndGenerateAiReply } = require('./aiRouterService');
+const { uploadMediaToR2 } = require('./r2StorageService');
 
 // State variables
 let sock = null;
@@ -811,28 +813,22 @@ async function initBaileys(forceRestart = false) {
             }
           }
 
-          // Generate Gemini AI response for complex queries
+          // Generate AI response using Multi-Model Router (Groq + Cloudflare + Gemini + Pinecone)
           let failResult = null;
+          let activeAiProvider = 'GEMINI';
           if (!replyText) {
             try {
               const chatHistory = await getGeminiChatHistory(senderPhone);
-
-              // 🌲 Retrieve relevant semantic past interactions from Pinecone Vector Memory
-              let pineconeSemanticContext = '';
-              try {
-                const pastMatches = await queryRelevantHistory(senderPhone, messageText);
-                pineconeSemanticContext = formatSemanticContextForPrompt(pastMatches);
-              } catch (pinQueryErr) {
-                console.warn('[Baileys] Pinecone memory query note:', pinQueryErr.message);
-              }
-
-              replyText = await generateGeminiReply(
-                messageText,
+              const routerResult = await routeAndGenerateAiReply({
+                userMessage: messageText,
+                senderPhone,
                 dynamicPrompt,
                 chatHistory,
-                processedMedia,
-                pineconeSemanticContext
-              );
+                mediaPayload: processedMedia,
+              });
+
+              replyText = routerResult.replyText;
+              activeAiProvider = routerResult.provider;
               await resetFailedAttempts(senderPhone);
 
               // 🎨 Intercept Gemini-triggered image generation tag [GENERATE_IMAGE: <prompt>]
@@ -909,6 +905,9 @@ async function initBaileys(forceRestart = false) {
 
           // STEP 4: Natural Delivery (Dispatch WhatsApp Message or Image)
           if (generatedImageResult && generatedImageResult.buffer) {
+            // Upload generated AI image to Cloudflare R2 cloud storage
+            uploadMediaToR2(generatedImageResult.buffer, `flux_${Date.now()}.jpg`, 'image/jpeg', 'generated').catch(() => {});
+
             await sock.sendMessage(senderJid, {
               image: generatedImageResult.buffer,
               caption: replyText,

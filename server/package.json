@@ -9,6 +9,7 @@
     "dev": "nodemon --config nodemon.json src/server.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1131.0",
     "@google/generative-ai": "^0.24.0",
     "@huggingface/inference": "^4.13.28",
     "@pinecone-database/pinecone": "^9.0.0",
@@ -17,6 +18,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "groq-sdk": "^1.6.0",
     "mongoose": "^8.9.5",
     "nodemailer": "^10.0.9",
     "pdf-parse": "^2.4.5",

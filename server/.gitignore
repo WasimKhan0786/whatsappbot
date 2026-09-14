@@ -26,3 +26,6 @@ Thumbs.db
 test_*.js
 reset_*.js
 
+# Uploads directory
+uploads/
+

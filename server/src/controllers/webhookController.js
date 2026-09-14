@@ -2,6 +2,7 @@ const BotSettings = require("../models/BotSettings");
 const MessageLog = require("../models/MessageLog");
 const WhitelistContact = require("../models/WhitelistContact");
 const { generateGeminiReply } = require("../services/geminiService");
+const { routeAndGenerateAiReply } = require("../services/aiRouterService");
 const { checkActiveSchedule } = require("../services/scheduleService");
 const { sendWhatsAppMessage, sendWhatsAppImage } = require("../services/whatsappService");
 const {
@@ -397,19 +398,14 @@ const handleTwilioWebhook = async (req, res) => {
           isAutoReplyAll
         );
 
-        let pineconeSemanticContext = '';
-        try {
-          const pastMatches = await queryRelevantHistory(sender, messageText);
-          pineconeSemanticContext = formatSemanticContextForPrompt(pastMatches);
-        } catch (pinErr) {}
-
-        replyText = await generateGeminiReply(
-          messageText,
+        const routerResult = await routeAndGenerateAiReply({
+          userMessage: messageText,
+          sender,
           dynamicPrompt,
           chatHistory,
-          null,
-          pineconeSemanticContext
-        );
+          mediaPayload: null,
+        });
+        replyText = routerResult.replyText;
         await resetFailedAttempts(sender);
       } catch (geminiErr) {
         console.error('[Twilio] Gemini error:', geminiErr.message);
@@ -844,19 +840,14 @@ const handleIncoming = async (req, res) => {
           isAutoReplyAll
         );
 
-        let pineconeSemanticContext = '';
-        try {
-          const pastMatches = await queryRelevantHistory(sender, messageText);
-          pineconeSemanticContext = formatSemanticContextForPrompt(pastMatches);
-        } catch (pinErr) {}
-
-        replyText = await generateGeminiReply(
-          messageText,
+        const routerResult = await routeAndGenerateAiReply({
+          userMessage: messageText,
+          sender,
           dynamicPrompt,
           chatHistory,
-          null,
-          pineconeSemanticContext
-        );
+          mediaPayload: null,
+        });
+        replyText = routerResult.replyText;
         await resetFailedAttempts(sender);
       } catch (geminiErr) {
         console.error("Gemini error:", geminiErr.message);
