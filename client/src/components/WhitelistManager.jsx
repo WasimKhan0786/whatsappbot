@@ -115,20 +115,37 @@ export default function WhitelistManager({ onContactsUpdated }) {
 
   // Change contact limit on the fly
   const handleQuickLimitChange = async (id, newLimit, nameOrPhone) => {
+    const targetLimit = Number(newLimit) || 0;
+    // Optimistically update local contacts state immediately so the selector never snaps back
+    setContacts((prev) =>
+      prev.map((c) =>
+        c._id === id
+          ? {
+              ...c,
+              maxMessageLimit: targetLimit,
+              isCapReached: targetLimit > 0 && (c.messagesSentCount || 0) >= targetLimit,
+            }
+          : c
+      )
+    );
     try {
       const res = await fetch(`/api/whitelist/${id}/message-limit`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ maxMessageLimit: Number(newLimit) }),
+        body: JSON.stringify({ maxMessageLimit: targetLimit }),
       });
       const json = await res.json();
       if (json.success) {
-        setSuccessMsg(`Limit updated to ${newLimit === 0 ? 'Unlimited' : newLimit + ' msgs'} for ${nameOrPhone}`);
+        setSuccessMsg(`Limit updated to ${targetLimit === 0 ? 'Unlimited' : targetLimit + ' msgs'} for ${nameOrPhone}`);
         await fetchContacts();
         if (onContactsUpdated) onContactsUpdated();
         setTimeout(() => setSuccessMsg(''), 3000);
+      } else {
+        await fetchContacts();
+        setError(json.error || 'Failed to update limit');
       }
     } catch (err) {
+      await fetchContacts();
       setError('Failed to update limit: ' + err.message);
     }
   };
@@ -1117,10 +1134,14 @@ export default function WhitelistManager({ onContactsUpdated }) {
                           >
                             <option value={0}>♾️ Unlimited</option>
                             <option value={3}>3 msgs</option>
+                            <option value={4}>4 msgs</option>
                             <option value={5}>5 msgs</option>
                             <option value={10}>10 msgs</option>
                             <option value={20}>20 msgs</option>
                             <option value={50}>50 msgs</option>
+                            {![0, 3, 4, 5, 10, 20, 50].includes(c.maxMessageLimit || 0) && (
+                              <option value={c.maxMessageLimit}>{c.maxMessageLimit} msgs</option>
+                            )}
                           </select>
                         </div>
                       </div>

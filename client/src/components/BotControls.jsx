@@ -94,6 +94,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
   const [isEditingPhone, setIsEditingPhone] = useState(false);
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
   const [isEditingInactivity, setIsEditingInactivity] = useState(false);
+  const [isEditingLimit, setIsEditingLimit] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [resettingAll, setResettingAll] = useState(false);
   const [resetAllSuccess, setResetAllSuccess] = useState(false);
@@ -112,7 +113,9 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       setMinReadingDelayMs(settings.minReadingDelayMs ?? 2000);
       setMaxReadingDelayMs(settings.maxReadingDelayMs ?? 6000);
       setTypingSpeedCPM(settings.typingSpeedCPM ?? 250);
-      setDefaultMaxMessagesPerContact(settings.defaultMaxMessagesPerContact ?? 0);
+      if (!isEditingLimit) {
+        setDefaultMaxMessagesPerContact(settings.defaultMaxMessagesPerContact ?? 0);
+      }
       setLimitReachedClosingMessage(settings.limitReachedClosingMessage || '');
       setDailySessionStrategy(settings.dailySessionStrategy ?? 'RESET');
       setDailyArchiveRetentionDays(settings.dailyArchiveRetentionDays ?? 3);
@@ -261,6 +264,40 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       imageGenerationNotice,
       ownerInactivityTimerEnabled,
       ownerInactivityDurationMinutes: Number(ownerInactivityDurationMinutes),
+      ownerInactivityScope,
+      newsEnabled,
+      newsDefaultCountry,
+      newsDefaultLanguage,
+      newsMaxArticles: Number(newsMaxArticles),
+    });
+  };
+
+  // Instant Global Max Message Limit handler
+  const handleDefaultMaxMessagesLimitChange = async (newLimit) => {
+    const parsedLimit = Math.max(0, parseInt(newLimit, 10) || 0);
+    setDefaultMaxMessagesPerContact(parsedLimit);
+    setIsEditingLimit(false);
+    await onUpdateSettings({
+      isEnabled,
+      autoReplyAll,
+      allowedPhoneNumber: phoneNumber,
+      systemPrompt: prompt,
+      humanSimulationEnabled,
+      minReadingDelayMs,
+      maxReadingDelayMs,
+      typingSpeedCPM,
+      defaultMaxMessagesPerContact: parsedLimit,
+      limitReachedClosingMessage,
+      dailySessionStrategy,
+      dailyArchiveRetentionDays: Number(dailyArchiveRetentionDays),
+      profanityFilterEnabled,
+      profanityReplyMessage,
+      customProfanityKeywords: customProfanityKeywords.split(',').map(k => k.trim()).filter(Boolean),
+      imageGenerationEnabled,
+      imageGenerationModel,
+      imageGenerationNotice,
+      ownerInactivityTimerEnabled,
+      ownerInactivityDurationMinutes: Math.max(1, Number(ownerInactivityDurationMinutes) || 15),
       ownerInactivityScope,
       newsEnabled,
       newsDefaultCountry,
@@ -2372,7 +2409,17 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
               className="text-input"
               style={{ width: 140, height: 40, fontSize: '0.9rem' }}
               value={defaultMaxMessagesPerContact}
+              onFocus={() => setIsEditingLimit(true)}
               onChange={(e) => setDefaultMaxMessagesPerContact(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              onBlur={(e) => {
+                setIsEditingLimit(false);
+                handleDefaultMaxMessagesLimitChange(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.target.blur();
+                }
+              }}
               placeholder="0 (Unlimited)"
             />
             <div className="preset-chips" style={{ margin: 0 }}>
@@ -2388,7 +2435,7 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
                     borderColor: defaultMaxMessagesPerContact === lim ? '#25D366' : undefined,
                     color: defaultMaxMessagesPerContact === lim ? '#4ade80' : undefined,
                   }}
-                  onClick={() => setDefaultMaxMessagesPerContact(lim)}
+                  onClick={() => handleDefaultMaxMessagesLimitChange(lim)}
                 >
                   {lim === 0 ? '♾️ Unlimited' : `🎯 ${lim} msgs`}
                 </button>
