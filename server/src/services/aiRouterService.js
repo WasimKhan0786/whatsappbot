@@ -2,6 +2,7 @@ const { generateGeminiReply } = require('./geminiService');
 const { generateGroqReply, isGroqAvailable } = require('./groqService');
 const { generateCloudflareReply } = require('./cloudflareAiService');
 const { queryRelevantHistory, formatSemanticContextForPrompt } = require('./pineconeService');
+const { fetchCurrentWeather, extractWeatherQuery } = require('./weatherService');
 
 /**
  * Classifies whether an incoming query is routine/lightweight or complex/multilingual
@@ -70,6 +71,17 @@ async function routeAndGenerateAiReply({
   } catch (pinErr) {
     console.warn('[AI Router] Pinecone query note:', pinErr.message);
   }
+
+  // 1b. Real-time Weather Context Injection (Grounding)
+  try {
+    const weatherReq = extractWeatherQuery(userMessage);
+    if (weatherReq.isWeatherRequest && weatherReq.city) {
+      const liveW = await fetchCurrentWeather({ city: weatherReq.city });
+      if (liveW.success) {
+        semanticContext = `${semanticContext}\n\n[VERIFIED LIVE WEATHER DATA for ${liveW.city}, ${liveW.country}]: Temperature is ${liveW.temp}°C (feels like ${liveW.feelsLike}°C), condition: ${liveW.condition} (${liveW.description}), humidity: ${liveW.humidity}%, wind: ${liveW.windSpeed}m/s. Answer accurately with this real-time data!`;
+      }
+    }
+  } catch (wErr) {}
 
   // 2. Classify query complexity
   const queryComplexity = classifyQueryComplexity(userMessage, mediaPayload);
