@@ -23,6 +23,7 @@ const {
   getActiveInactivityList,
   resumeOwnerInactivityHandler,
   testNewsSearch,
+  testGoogleSearch,
 } = require('../controllers/settingsController');
 
 const {
@@ -114,5 +115,9 @@ router.post('/inactivity/resume/:contactPhone?', resumeOwnerInactivityHandler);
 
 // Real-Time World News Integration (World News API)
 router.post('/news/test', testNewsSearch);
+
+// Google Programmable Search Engine Integration
+router.get('/search', testGoogleSearch);
+router.post('/search/test', testGoogleSearch);
 
 module.exports = router;

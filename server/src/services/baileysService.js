@@ -55,6 +55,11 @@ const {
 } = require('./pineconeService');
 const { routeAndGenerateAiReply } = require('./aiRouterService');
 const { uploadMediaToR2 } = require('./r2StorageService');
+const {
+  extractSearchQuery,
+  searchGoogle,
+  formatSearchResultsForWhatsApp,
+} = require('./googleSearchService');
 
 // State variables
 let sock = null;
@@ -790,6 +795,32 @@ async function initBaileys(forceRestart = false) {
                 }
               } catch (newsErr) {
                 console.error('[Baileys] Real-time news fetch failed:', newsErr.message);
+              }
+            }
+          }
+
+          // 🔍 4. GOOGLE PROGRAMMABLE SEARCH ENGINE INTERCEPT
+          const isGoogleSearchActive = settings.googleSearchEnabled ?? true;
+          if (!replyText && isGoogleSearchActive) {
+            const searchExtraction = extractSearchQuery(messageText);
+            if (searchExtraction.isSearchRequest && searchExtraction.query) {
+              console.log(`[Baileys] 🔍 Google Search request identified from ${senderPhone}: "${searchExtraction.query}"`);
+              try {
+                const searchResult = await searchGoogle(searchExtraction.query, {
+                  cx: settings.googleSearchCx || process.env.GOOGLE_SEARCH_CX || '8002fdf14f0bb4998',
+                  apiKey: settings.googleSearchApiKey || process.env.GOOGLE_SEARCH_API_KEY || process.env.GEMINI_API_KEY,
+                  num: settings.googleSearchMaxResults || 4,
+                });
+
+                if (searchResult.success && searchResult.items && searchResult.items.length > 0) {
+                  replyText = formatSearchResultsForWhatsApp(searchResult, searchExtraction.query);
+                  routingCategory = 'GOOGLE_SEARCH';
+                  routingIntent = `SEARCH:${searchExtraction.query.substring(0, 30)}`;
+                } else if (!searchResult.success && searchResult.error) {
+                  console.warn('[Baileys] Google Search API note:', searchResult.error);
+                }
+              } catch (searchErr) {
+                console.error('[Baileys] Google Search failed:', searchErr.message);
               }
             }
           }

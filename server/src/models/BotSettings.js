@@ -128,6 +128,24 @@ const botSettingsSchema = new mongoose.Schema({
     type: Number,
     default: 3,
   },
+  googleSearchEnabled: {
+    type: Boolean,
+    default: true,
+  },
+  googleSearchCx: {
+    type: String,
+    default: '8002fdf14f0bb4998',
+    trim: true,
+  },
+  googleSearchApiKey: {
+    type: String,
+    default: '',
+    trim: true,
+  },
+  googleSearchMaxResults: {
+    type: Number,
+    default: 4,
+  },
   updatedAt: {
     type: Date,
     default: Date.now,
@@ -240,6 +258,18 @@ botSettingsSchema.statics.getSettings = async function () {
     }
     if (!settings.newsMaxArticles) {
       settings.newsMaxArticles = 3;
+      needsSave = true;
+    }
+    if (settings.googleSearchEnabled === undefined) {
+      settings.googleSearchEnabled = true;
+      needsSave = true;
+    }
+    if (!settings.googleSearchCx) {
+      settings.googleSearchCx = '8002fdf14f0bb4998';
+      needsSave = true;
+    }
+    if (settings.googleSearchMaxResults === undefined) {
+      settings.googleSearchMaxResults = 4;
       needsSave = true;
     }
     if (needsSave) {

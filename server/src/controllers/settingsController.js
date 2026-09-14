@@ -49,6 +49,11 @@ const {
   fetchRealTimeNews,
   formatNewsForWhatsApp,
 } = require('../services/worldNewsService');
+const {
+  searchGoogle,
+  extractSearchQuery,
+  formatSearchResultsForWhatsApp,
+} = require('../services/googleSearchService');
 
 /**
  * GET /api/settings
@@ -1155,6 +1160,50 @@ const testNewsSearch = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/search/test
+ * GET /api/search
+ * Test Google Programmable Search Engine via HTTP request
+ */
+const testGoogleSearch = async (req, res) => {
+  try {
+    const query = req.body?.query || req.query?.q || req.query?.query;
+    if (!query || !query.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Query parameter "query" or "q" is required',
+      });
+    }
+
+    const settings = await BotSettings.getSettings();
+    const cx = req.body?.cx || req.query?.cx || settings.googleSearchCx || process.env.GOOGLE_SEARCH_CX || '8002fdf14f0bb4998';
+    const apiKey = req.body?.apiKey || req.query?.apiKey || settings.googleSearchApiKey || process.env.GOOGLE_SEARCH_API_KEY || process.env.GEMINI_API_KEY;
+    const num = parseInt(req.body?.num || req.query?.num, 10) || settings.googleSearchMaxResults || 4;
+
+    const result = await searchGoogle(query, {
+      cx,
+      apiKey,
+      num,
+    });
+
+    const whatsappFormatted = formatSearchResultsForWhatsApp(result, query);
+
+    return res.json({
+      success: result.success,
+      query: result.query,
+      cx,
+      totalResults: result.totalResults,
+      searchTime: result.searchTime,
+      items: result.items,
+      whatsappFormatted,
+      error: result.error,
+    });
+  } catch (err) {
+    console.error('Error in testGoogleSearch:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 module.exports = {
   getSettings,
   updateSettings,
@@ -1178,6 +1227,7 @@ module.exports = {
   getActiveInactivityList,
   resumeOwnerInactivityHandler,
   testNewsSearch,
+  testGoogleSearch,
 };
 
 
