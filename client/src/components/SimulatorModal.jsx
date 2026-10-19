@@ -22,16 +22,29 @@ export default function SimulatorModal({
     setSender('+9998887766');
   };
 
+  const handleUseGroup = () => {
+    setSender('120363023456789012@g.us');
+    setMessageText('Bhai log kal ki party ka timing confirm hua kya? Aur kahan aana hai?');
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setResult(null);
 
+    const isGroup = Boolean(sender.endsWith('@g.us') || sender.startsWith('group_'));
+
     try {
       const res = await fetch('/api/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sender, messageText }),
+        body: JSON.stringify({
+          sender,
+          messageText,
+          isGroup,
+          groupName: 'Tech & Friends WhatsApp Group',
+          senderName: 'Farhan Ali',
+        }),
       });
       const data = await res.json();
       setResult(data);
@@ -89,6 +102,15 @@ export default function SimulatorModal({
                     title="Set to random number to test rejection"
                   >
                     Test Unauthorized
+                  </button>
+                  <button
+                    type="button"
+                    className="chip-btn"
+                    onClick={handleUseGroup}
+                    style={{ borderColor: 'rgba(56, 189, 248, 0.4)', color: '#38bdf8' }}
+                    title="Set to WhatsApp group JID to test group auto-reply"
+                  >
+                    👥 Test Group (@g.us)
                   </button>
                 </div>
               </label>

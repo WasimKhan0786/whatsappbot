@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Clock, MessageSquare, Trash2, User, Sparkles, ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Timer, Newspaper } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Clock, MessageSquare, Trash2, User, Sparkles, ChevronDown, ChevronUp, ShieldAlert, Image as ImageIcon, Timer, Newspaper, Users } from 'lucide-react';
 
 export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
   const [activeTab, setActiveTab] = useState('ALL');
@@ -9,6 +9,7 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
   const filteredLogs = logs.filter((log) => {
     if (activeTab === 'ALL') return true;
     if (activeTab === 'NEWS') return log.routingCategory === 'NEWS' || log.status === 'NEWS_FETCHED';
+    if (activeTab === 'GROUP') return log.status === 'GROUP_REPLY_SENT' || log.routingCategory === 'GROUP_CHAT' || log.routingCategory === 'GROUP_AUTO_REPLY';
     return log.status === activeTab;
   });
 
@@ -96,6 +97,24 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
             Abuse Blocked
           </span>
         );
+      case 'GROUP_REPLY_SENT':
+        return (
+          <span
+            className="badge-status"
+            style={{
+              background: 'rgba(59, 130, 246, 0.2)',
+              color: '#60a5fa',
+              borderColor: 'rgba(59, 130, 246, 0.4)',
+              border: '1px solid',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <Users size={11} />
+            Group Auto-Reply
+          </span>
+        );
       default:
         return <span className="badge-status">{status}</span>;
     }
@@ -130,7 +149,7 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
 
       {/* Filter Tabs */}
       <div className="filter-tabs">
-        {['ALL', 'PROCESSED', 'IMAGE_GENERATED', 'NEWS', 'PROFANITY_BLOCKED', 'PAUSED_OWNER_ACTIVE', 'IGNORED_PHONE_MISMATCH', 'BOT_DISABLED', 'ERROR'].map((tab) => (
+        {['ALL', 'PROCESSED', 'GROUP', 'IMAGE_GENERATED', 'NEWS', 'PROFANITY_BLOCKED', 'PAUSED_OWNER_ACTIVE', 'IGNORED_PHONE_MISMATCH', 'BOT_DISABLED', 'ERROR'].map((tab) => (
           <button
             key={tab}
             id={`filter-tab-${tab.toLowerCase()}`}
@@ -141,6 +160,8 @@ export default function MessageLogs({ logs, onClearLogs, loadingLogs }) {
               ? `All (${logs.length})`
               : tab === 'PROCESSED'
               ? 'Processed'
+              : tab === 'GROUP'
+              ? '👥 Groups'
               : tab === 'IMAGE_GENERATED'
               ? '🎨 Image Gen'
               : tab === 'NEWS'

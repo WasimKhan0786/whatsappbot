@@ -1,5 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, Check, Phone, Save, Sparkles, Sliders, Shield, Clock, Zap, Globe, RotateCcw, Calendar, Database, Cpu, Play, ShieldAlert, AlertTriangle, Image as ImageIcon, Timer, VolumeX, RefreshCw, Newspaper } from 'lucide-react';
+import { Bot, Check, Phone, Save, Sparkles, Sliders, Shield, Clock, Zap, Globe, RotateCcw, Calendar, Database, Cpu, Play, ShieldAlert, AlertTriangle, Image as ImageIcon, Timer, VolumeX, RefreshCw, Newspaper, Users } from 'lucide-react';
+
+const GROUP_PRESETS = [
+  {
+    name: 'Desi Dost & Active Member',
+    prompt:
+      'Tum WhatsApp group ke ek sensible, helpful aur active member ho. Group members aapas me jo bhi baat kar rahe hain ya sawal puch rahe hain, conversation ko samajh kar bilkul relevant/related, short (1-2 sentences) aur natural jawab do. Desi Hinglish ya Hindi me reply karo jaise group me log baat karte hain. Kabhi faltu lambe robotic bhashan mat do aur na hi spam karo.',
+  },
+  {
+    name: 'Helpful & Professional',
+    prompt:
+      'You are a polite, helpful, and attentive member of this WhatsApp group. Respond only with information that is directly relevant to what was asked or discussed in the group. Keep replies strictly to 1 or 2 concise, friendly sentences.',
+  },
+  {
+    name: 'Fun & Casual Banter',
+    prompt:
+      'Tum group ke chill aur witty member ho. Group conversation ko follow karte huye light-hearted, friendly aur relevant short reply do. Har baat pe unnecessary advice mat do, sensible desi casual chat rakho.',
+  },
+];
 
 const PRESETS = [
   {
@@ -91,6 +109,36 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
   const [testingNews, setTestingNews] = useState(false);
   const [newsTestResult, setNewsTestResult] = useState(null);
 
+  // WhatsApp Group Auto-Reply state
+  const [groupAutoReplyEnabled, setGroupAutoReplyEnabled] = useState(settings?.groupAutoReplyEnabled ?? false);
+  const [groupReplyMode, setGroupReplyMode] = useState(settings?.groupReplyMode || 'ALL');
+  const [groupTriggerKeywords, setGroupTriggerKeywords] = useState(
+    Array.isArray(settings?.groupTriggerKeywords)
+      ? settings.groupTriggerKeywords.join(', ')
+      : '@bot, wasim, bot, bhai, help, kaha ho, suno'
+  );
+  const [groupSystemPrompt, setGroupSystemPrompt] = useState(
+    settings?.groupSystemPrompt ||
+      'Tum WhatsApp group ke ek sensible, helpful aur active member ho. Group members aapas me jo bhi baat kar rahe hain ya sawal puch rahe hain, conversation ko samajh kar bilkul relevant/related, short (1-2 sentences) aur natural jawab do. Desi Hinglish ya Hindi me reply karo jaise group me log baat karte hain. Kabhi faltu lambe robotic bhashan mat do aur na hi spam karo.'
+  );
+  const [groupCooldownSeconds, setGroupCooldownSeconds] = useState(settings?.groupCooldownSeconds ?? 5);
+  const [groupQuoteOriginal, setGroupQuoteOriginal] = useState(settings?.groupQuoteOriginal ?? true);
+  const [groupTargetScope, setGroupTargetScope] = useState(settings?.groupTargetScope || 'ALL');
+  const [targetGroups, setTargetGroups] = useState(Array.isArray(settings?.targetGroups) ? settings.targetGroups : []);
+  const [availableWhatsAppGroups, setAvailableWhatsAppGroups] = useState([]);
+  const [fetchingWhatsAppGroups, setFetchingWhatsAppGroups] = useState(false);
+  const [fetchGroupsStatus, setFetchGroupsStatus] = useState(null);
+  const [manualGroupName, setManualGroupName] = useState('');
+  const [manualGroupJid, setManualGroupJid] = useState('');
+  const [groupFilterSearch, setGroupFilterSearch] = useState('');
+
+  // Group Simulation / Test state
+  const [testGroupMessage, setTestGroupMessage] = useState('Bhai kal meeting ka timing kya hai? Aur venue kahan pe hai?');
+  const [testGroupName, setTestGroupName] = useState('Tech Family & Friends');
+  const [testGroupSender, setTestGroupSender] = useState('Faizan Ali');
+  const [testingGroupReply, setTestingGroupReply] = useState(false);
+  const [groupTestResult, setGroupTestResult] = useState(null);
+
   const [isEditingPhone, setIsEditingPhone] = useState(false);
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
   const [isEditingInactivity, setIsEditingInactivity] = useState(false);
@@ -142,6 +190,22 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       setNewsDefaultCountry(settings.newsDefaultCountry || 'in');
       setNewsDefaultLanguage(settings.newsDefaultLanguage || 'en');
       setNewsMaxArticles(settings.newsMaxArticles ?? 3);
+
+      setGroupAutoReplyEnabled(settings.groupAutoReplyEnabled ?? false);
+      setGroupReplyMode(settings.groupReplyMode || 'ALL');
+      if (Array.isArray(settings.groupTriggerKeywords)) {
+        setGroupTriggerKeywords(settings.groupTriggerKeywords.join(', '));
+      }
+      setGroupSystemPrompt(
+        settings.groupSystemPrompt ||
+          'Tum WhatsApp group ke ek sensible, helpful aur active member ho. Group members aapas me jo bhi baat kar rahe hain ya sawal puch rahe hain, conversation ko samajh kar bilkul relevant/related, short (1-2 sentences) aur natural jawab do. Desi Hinglish ya Hindi me reply karo jaise group me log baat karte hain. Kabhi faltu lambe robotic bhashan mat do aur na hi spam karo.'
+      );
+      setGroupCooldownSeconds(settings.groupCooldownSeconds ?? 5);
+      setGroupQuoteOriginal(settings.groupQuoteOriginal ?? true);
+      setGroupTargetScope(settings.groupTargetScope || 'ALL');
+      if (Array.isArray(settings.targetGroups)) {
+        setTargetGroups(settings.targetGroups);
+      }
 
       // Only sync if user is not actively editing
       if (!isEditingPhone) {
@@ -203,6 +267,14 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       newsDefaultCountry,
       newsDefaultLanguage,
       newsMaxArticles: Number(newsMaxArticles),
+      groupAutoReplyEnabled,
+      groupReplyMode,
+      groupTriggerKeywords: groupTriggerKeywords.split(',').map(k => k.trim()).filter(Boolean),
+      groupSystemPrompt,
+      groupCooldownSeconds: Number(groupCooldownSeconds),
+      groupQuoteOriginal,
+      groupTargetScope,
+      targetGroups,
     });
   };
 
@@ -236,7 +308,355 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       newsDefaultCountry,
       newsDefaultLanguage,
       newsMaxArticles: Number(newsMaxArticles),
+      groupAutoReplyEnabled,
+      groupReplyMode,
+      groupTriggerKeywords: groupTriggerKeywords.split(',').map(k => k.trim()).filter(Boolean),
+      groupSystemPrompt,
+      groupCooldownSeconds: Number(groupCooldownSeconds),
+      groupQuoteOriginal,
+      groupTargetScope,
+      targetGroups,
     });
+  };
+
+  // Instant WhatsApp Group Auto-Reply toggle handler
+  const handleGroupAutoReplyToggle = async () => {
+    const nextGroupState = !groupAutoReplyEnabled;
+    setGroupAutoReplyEnabled(nextGroupState);
+    await onUpdateSettings({
+      isEnabled,
+      autoReplyAll,
+      allowedPhoneNumber: phoneNumber,
+      systemPrompt: prompt,
+      humanSimulationEnabled,
+      minReadingDelayMs,
+      maxReadingDelayMs,
+      typingSpeedCPM,
+      defaultMaxMessagesPerContact: Number(defaultMaxMessagesPerContact),
+      limitReachedClosingMessage,
+      dailySessionStrategy,
+      dailyArchiveRetentionDays: Number(dailyArchiveRetentionDays),
+      profanityFilterEnabled,
+      profanityReplyMessage,
+      customProfanityKeywords: customProfanityKeywords.split(',').map(k => k.trim()).filter(Boolean),
+      imageGenerationEnabled,
+      imageGenerationModel,
+      imageGenerationNotice,
+      ownerInactivityTimerEnabled,
+      ownerInactivityDurationMinutes: Number(ownerInactivityDurationMinutes),
+      ownerInactivityScope,
+      newsEnabled,
+      newsDefaultCountry,
+      newsDefaultLanguage,
+      newsMaxArticles: Number(newsMaxArticles),
+      groupAutoReplyEnabled: nextGroupState,
+      groupReplyMode,
+      groupTriggerKeywords: groupTriggerKeywords.split(',').map(k => k.trim()).filter(Boolean),
+      groupSystemPrompt,
+      groupCooldownSeconds: Number(groupCooldownSeconds),
+      groupQuoteOriginal,
+      groupTargetScope,
+      targetGroups,
+    });
+  };
+
+  // Live test for WhatsApp Group Auto-Reply
+  const handleTestGroupReply = async () => {
+    setTestingGroupReply(true);
+    setGroupTestResult(null);
+    try {
+      const matchedTg = targetGroups.find(
+        (g) => g.name && g.name.toLowerCase().trim() === testGroupName.toLowerCase().trim()
+      );
+      const res = await fetch('/api/settings/test-group-reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          groupName: testGroupName,
+          groupJid: matchedTg ? matchedTg.jid : '120363023456789012@g.us',
+          senderName: testGroupSender,
+          messageText: testGroupMessage,
+        }),
+      });
+      const data = await res.json();
+      setGroupTestResult(data);
+    } catch (err) {
+      setGroupTestResult({ success: false, error: err.message });
+    } finally {
+      setTestingGroupReply(false);
+    }
+  };
+
+  // Fetch Live WhatsApp Groups from Baileys socket
+  const handleFetchWhatsAppGroups = async () => {
+    setFetchingWhatsAppGroups(true);
+    setFetchGroupsStatus(null);
+    try {
+      const res = await fetch('/api/settings/whatsapp-groups');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.groups)) {
+        setAvailableWhatsAppGroups(data.groups);
+        setFetchGroupsStatus({
+          success: true,
+          message: `Found ${data.groups.length} participating WhatsApp groups!`,
+        });
+      } else {
+        setFetchGroupsStatus({
+          success: false,
+          message: data.message || data.error || 'WhatsApp Web is not currently connected. Please link via QR code.',
+        });
+      }
+    } catch (err) {
+      setFetchGroupsStatus({ success: false, message: err.message || 'Error connecting to server' });
+    } finally {
+      setFetchingWhatsAppGroups(false);
+    }
+  };
+
+  // Instant Scope Switch Handler (Auto-saves immediately to MongoDB)
+  const handleGroupTargetScopeChange = async (newScope) => {
+    setGroupTargetScope(newScope);
+    await onUpdateSettings({
+      isEnabled,
+      autoReplyAll,
+      allowedPhoneNumber: phoneNumber,
+      systemPrompt: prompt,
+      humanSimulationEnabled,
+      minReadingDelayMs: Number(minReadingDelayMs),
+      maxReadingDelayMs: Number(maxReadingDelayMs),
+      typingSpeedCPM: Number(typingSpeedCPM),
+      defaultMaxMessagesPerContact: Number(defaultMaxMessagesPerContact),
+      limitReachedClosingMessage,
+      dailySessionStrategy,
+      dailyArchiveRetentionDays: Number(dailyArchiveRetentionDays),
+      profanityFilterEnabled,
+      profanityReplyMessage,
+      customProfanityKeywords: Array.isArray(customProfanityKeywords)
+        ? customProfanityKeywords
+        : String(customProfanityKeywords || '').split(',').map((k) => k.trim()).filter(Boolean),
+      imageGenerationEnabled,
+      imageGenerationModel,
+      imageGenerationNotice,
+      ownerInactivityTimerEnabled,
+      ownerInactivityDurationMinutes: Math.max(1, Number(ownerInactivityDurationMinutes) || 15),
+      ownerInactivityScope,
+      newsEnabled,
+      newsDefaultCountry,
+      newsDefaultLanguage,
+      newsMaxArticles: Number(newsMaxArticles),
+      groupAutoReplyEnabled,
+      groupReplyMode,
+      groupTriggerKeywords: Array.isArray(groupTriggerKeywords)
+        ? groupTriggerKeywords
+        : String(groupTriggerKeywords || '').split(',').map((k) => k.trim()).filter(Boolean),
+      groupSystemPrompt,
+      groupCooldownSeconds: Number(groupCooldownSeconds),
+      groupQuoteOriginal,
+      groupTargetScope: newScope,
+      targetGroups,
+    });
+  };
+
+  // Add / Remove or Toggle Group in Target List (Auto-saves immediately)
+  const handleToggleTargetGroup = async (group) => {
+    const existingIdx = targetGroups.findIndex(
+      (g) => (g.jid && g.jid === group.jid) || (g.name && group.name && g.name.toLowerCase() === group.name.toLowerCase())
+    );
+    let nextTargets;
+    if (existingIdx >= 0) {
+      nextTargets = targetGroups.filter((_, idx) => idx !== existingIdx);
+    } else {
+      nextTargets = [...targetGroups, { jid: group.jid, name: group.name, isEnabled: true }];
+    }
+    setTargetGroups(nextTargets);
+    await onUpdateSettings({
+      isEnabled,
+      autoReplyAll,
+      allowedPhoneNumber: phoneNumber,
+      systemPrompt: prompt,
+      humanSimulationEnabled,
+      minReadingDelayMs: Number(minReadingDelayMs),
+      maxReadingDelayMs: Number(maxReadingDelayMs),
+      typingSpeedCPM: Number(typingSpeedCPM),
+      defaultMaxMessagesPerContact: Number(defaultMaxMessagesPerContact),
+      limitReachedClosingMessage,
+      dailySessionStrategy,
+      dailyArchiveRetentionDays: Number(dailyArchiveRetentionDays),
+      profanityFilterEnabled,
+      profanityReplyMessage,
+      customProfanityKeywords: Array.isArray(customProfanityKeywords)
+        ? customProfanityKeywords
+        : String(customProfanityKeywords || '').split(',').map((k) => k.trim()).filter(Boolean),
+      imageGenerationEnabled,
+      imageGenerationModel,
+      imageGenerationNotice,
+      ownerInactivityTimerEnabled,
+      ownerInactivityDurationMinutes: Math.max(1, Number(ownerInactivityDurationMinutes) || 15),
+      ownerInactivityScope,
+      newsEnabled,
+      newsDefaultCountry,
+      newsDefaultLanguage,
+      newsMaxArticles: Number(newsMaxArticles),
+      groupAutoReplyEnabled,
+      groupReplyMode,
+      groupTriggerKeywords: Array.isArray(groupTriggerKeywords)
+        ? groupTriggerKeywords
+        : String(groupTriggerKeywords || '').split(',').map((k) => k.trim()).filter(Boolean),
+      groupSystemPrompt,
+      groupCooldownSeconds: Number(groupCooldownSeconds),
+      groupQuoteOriginal,
+      groupTargetScope,
+      targetGroups: nextTargets,
+    });
+  };
+
+  // Remove specific target group by index (Auto-saves immediately)
+  const handleRemoveTargetGroup = async (indexToRemove) => {
+    const nextTargets = targetGroups.filter((_, idx) => idx !== indexToRemove);
+    setTargetGroups(nextTargets);
+    await onUpdateSettings({
+      isEnabled,
+      autoReplyAll,
+      allowedPhoneNumber: phoneNumber,
+      systemPrompt: prompt,
+      humanSimulationEnabled,
+      minReadingDelayMs: Number(minReadingDelayMs),
+      maxReadingDelayMs: Number(maxReadingDelayMs),
+      typingSpeedCPM: Number(typingSpeedCPM),
+      defaultMaxMessagesPerContact: Number(defaultMaxMessagesPerContact),
+      limitReachedClosingMessage,
+      dailySessionStrategy,
+      dailyArchiveRetentionDays: Number(dailyArchiveRetentionDays),
+      profanityFilterEnabled,
+      profanityReplyMessage,
+      customProfanityKeywords: Array.isArray(customProfanityKeywords)
+        ? customProfanityKeywords
+        : String(customProfanityKeywords || '').split(',').map((k) => k.trim()).filter(Boolean),
+      imageGenerationEnabled,
+      imageGenerationModel,
+      imageGenerationNotice,
+      ownerInactivityTimerEnabled,
+      ownerInactivityDurationMinutes: Math.max(1, Number(ownerInactivityDurationMinutes) || 15),
+      ownerInactivityScope,
+      newsEnabled,
+      newsDefaultCountry,
+      newsDefaultLanguage,
+      newsMaxArticles: Number(newsMaxArticles),
+      groupAutoReplyEnabled,
+      groupReplyMode,
+      groupTriggerKeywords: Array.isArray(groupTriggerKeywords)
+        ? groupTriggerKeywords
+        : String(groupTriggerKeywords || '').split(',').map((k) => k.trim()).filter(Boolean),
+      groupSystemPrompt,
+      groupCooldownSeconds: Number(groupCooldownSeconds),
+      groupQuoteOriginal,
+      groupTargetScope,
+      targetGroups: nextTargets,
+    });
+  };
+
+  // Clear all targets (Auto-saves immediately)
+  const handleClearAllTargets = async () => {
+    setTargetGroups([]);
+    await onUpdateSettings({
+      isEnabled,
+      autoReplyAll,
+      allowedPhoneNumber: phoneNumber,
+      systemPrompt: prompt,
+      humanSimulationEnabled,
+      minReadingDelayMs: Number(minReadingDelayMs),
+      maxReadingDelayMs: Number(maxReadingDelayMs),
+      typingSpeedCPM: Number(typingSpeedCPM),
+      defaultMaxMessagesPerContact: Number(defaultMaxMessagesPerContact),
+      limitReachedClosingMessage,
+      dailySessionStrategy,
+      dailyArchiveRetentionDays: Number(dailyArchiveRetentionDays),
+      profanityFilterEnabled,
+      profanityReplyMessage,
+      customProfanityKeywords: Array.isArray(customProfanityKeywords)
+        ? customProfanityKeywords
+        : String(customProfanityKeywords || '').split(',').map((k) => k.trim()).filter(Boolean),
+      imageGenerationEnabled,
+      imageGenerationModel,
+      imageGenerationNotice,
+      ownerInactivityTimerEnabled,
+      ownerInactivityDurationMinutes: Math.max(1, Number(ownerInactivityDurationMinutes) || 15),
+      ownerInactivityScope,
+      newsEnabled,
+      newsDefaultCountry,
+      newsDefaultLanguage,
+      newsMaxArticles: Number(newsMaxArticles),
+      groupAutoReplyEnabled,
+      groupReplyMode,
+      groupTriggerKeywords: Array.isArray(groupTriggerKeywords)
+        ? groupTriggerKeywords
+        : String(groupTriggerKeywords || '').split(',').map((k) => k.trim()).filter(Boolean),
+      groupSystemPrompt,
+      groupCooldownSeconds: Number(groupCooldownSeconds),
+      groupQuoteOriginal,
+      groupTargetScope,
+      targetGroups: [],
+    });
+  };
+
+  // Manual Add Target Group (Auto-saves immediately)
+  const handleAddManualTargetGroup = async (e) => {
+    if (e) e.preventDefault();
+    if (!manualGroupName.trim() && !manualGroupJid.trim()) return;
+
+    const jidToAdd = manualGroupJid.trim() || `${Date.now()}@g.us`;
+    const nameToAdd = manualGroupName.trim() || manualGroupJid.trim();
+
+    const exists = targetGroups.some(
+      (g) => (g.jid && g.jid === jidToAdd) || (g.name && g.name.toLowerCase() === nameToAdd.toLowerCase())
+    );
+
+    if (!exists) {
+      const nextTargets = [...targetGroups, { jid: jidToAdd, name: nameToAdd, isEnabled: true }];
+      setTargetGroups(nextTargets);
+      await onUpdateSettings({
+        isEnabled,
+        autoReplyAll,
+        allowedPhoneNumber: phoneNumber,
+        systemPrompt: prompt,
+        humanSimulationEnabled,
+        minReadingDelayMs: Number(minReadingDelayMs),
+        maxReadingDelayMs: Number(maxReadingDelayMs),
+        typingSpeedCPM: Number(typingSpeedCPM),
+        defaultMaxMessagesPerContact: Number(defaultMaxMessagesPerContact),
+        limitReachedClosingMessage,
+        dailySessionStrategy,
+        dailyArchiveRetentionDays: Number(dailyArchiveRetentionDays),
+        profanityFilterEnabled,
+        profanityReplyMessage,
+        customProfanityKeywords: Array.isArray(customProfanityKeywords)
+          ? customProfanityKeywords
+          : String(customProfanityKeywords || '').split(',').map((k) => k.trim()).filter(Boolean),
+        imageGenerationEnabled,
+        imageGenerationModel,
+        imageGenerationNotice,
+        ownerInactivityTimerEnabled,
+        ownerInactivityDurationMinutes: Math.max(1, Number(ownerInactivityDurationMinutes) || 15),
+        ownerInactivityScope,
+        newsEnabled,
+        newsDefaultCountry,
+        newsDefaultLanguage,
+        newsMaxArticles: Number(newsMaxArticles),
+        groupAutoReplyEnabled,
+        groupReplyMode,
+        groupTriggerKeywords: Array.isArray(groupTriggerKeywords)
+          ? groupTriggerKeywords
+          : String(groupTriggerKeywords || '').split(',').map((k) => k.trim()).filter(Boolean),
+        groupSystemPrompt,
+        groupCooldownSeconds: Number(groupCooldownSeconds),
+        groupQuoteOriginal,
+        groupTargetScope,
+        targetGroups: nextTargets,
+      });
+    }
+
+    setManualGroupName('');
+    setManualGroupJid('');
   };
 
   // Instant Anti-Ban toggle handler
@@ -269,6 +689,14 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       newsDefaultCountry,
       newsDefaultLanguage,
       newsMaxArticles: Number(newsMaxArticles),
+      groupAutoReplyEnabled,
+      groupReplyMode,
+      groupTriggerKeywords: groupTriggerKeywords.split(',').map(k => k.trim()).filter(Boolean),
+      groupSystemPrompt,
+      groupCooldownSeconds: Number(groupCooldownSeconds),
+      groupQuoteOriginal,
+      groupTargetScope,
+      targetGroups,
     });
   };
 
@@ -564,6 +992,14 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
       newsDefaultCountry,
       newsDefaultLanguage,
       newsMaxArticles: Number(newsMaxArticles),
+      groupAutoReplyEnabled,
+      groupReplyMode,
+      groupTriggerKeywords: groupTriggerKeywords.split(',').map(k => k.trim()).filter(Boolean),
+      groupSystemPrompt,
+      groupCooldownSeconds: Number(groupCooldownSeconds),
+      groupQuoteOriginal,
+      groupTargetScope,
+      targetGroups,
     });
     if (res) {
       setIsEditingPhone(false);
@@ -790,6 +1226,708 @@ export default function BotControls({ settings, onUpdateSettings, updating }) {
         >
           <span className="toggle-knob"></span>
         </button>
+      </div>
+
+      {/* 👥 WhatsApp Group Auto-Reply Control Card */}
+      <div
+        id="group-auto-reply-card"
+        style={{
+          marginTop: 14,
+          padding: '18px 20px',
+          background: groupAutoReplyEnabled
+            ? 'linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(99, 102, 241, 0.14))'
+            : 'rgba(255, 255, 255, 0.03)',
+          border: `1px solid ${groupAutoReplyEnabled ? 'rgba(56, 189, 248, 0.45)' : 'rgba(255, 255, 255, 0.08)'}`,
+          borderRadius: 14,
+          boxShadow: groupAutoReplyEnabled ? '0 4px 20px rgba(14, 165, 233, 0.15)' : 'none',
+          transition: 'all 0.25s ease',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 10,
+                background: groupAutoReplyEnabled ? 'rgba(14, 165, 233, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: `1px solid ${groupAutoReplyEnabled ? 'rgba(56, 189, 248, 0.4)' : 'rgba(255, 255, 255, 0.1)'}`,
+              }}
+            >
+              <Users size={22} color={groupAutoReplyEnabled ? '#38bdf8' : '#9ca3af'} />
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2, flexWrap: 'wrap' }}>
+                <h3 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 600, color: '#fff' }}>
+                  WhatsApp Group Auto-Reply (ग्रुप ऑटो-रिप्लाई)
+                </h3>
+                <span
+                  className="label-badge"
+                  style={{
+                    background: groupAutoReplyEnabled ? 'rgba(14, 165, 233, 0.25)' : 'rgba(107, 114, 128, 0.2)',
+                    color: groupAutoReplyEnabled ? '#7dd3fc' : '#9ca3af',
+                    borderColor: groupAutoReplyEnabled ? '#0284c7' : 'rgba(255, 255, 255, 0.1)',
+                  }}
+                >
+                  {groupAutoReplyEnabled ? '👥 Group Bot: ACTIVE' : 'Group Replies: OFF'}
+                </span>
+              </div>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: groupAutoReplyEnabled ? '#bae6fd' : 'var(--text-muted)', lineHeight: 1.4 }}>
+                {groupAutoReplyEnabled
+                  ? 'Active: WhatsApp groups me aane wale message ko samajh kar turant relevant/related AI reply dispatch karega.'
+                  : 'Disabled: WhatsApp group messages ko process nahi kiya jayega.'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            id="group-auto-reply-toggle-btn"
+            type="button"
+            className={`toggle-switch ${groupAutoReplyEnabled ? 'on' : ''}`}
+            onClick={handleGroupAutoReplyToggle}
+            disabled={updating}
+            role="switch"
+            aria-checked={groupAutoReplyEnabled}
+            aria-label="Toggle WhatsApp Group Auto-Reply"
+            style={{
+              background: groupAutoReplyEnabled ? '#0284c7' : undefined,
+              flexShrink: 0,
+            }}
+          >
+            <span className="toggle-knob"></span>
+          </button>
+        </div>
+
+        {/* Extended Group Controls (when enabled) */}
+        {groupAutoReplyEnabled && (
+          <div
+            style={{
+              marginTop: 16,
+              paddingTop: 16,
+              borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 14,
+            }}
+          >
+            {/* Mode Selection */}
+            <div>
+              <label style={{ fontSize: '0.82rem', fontWeight: 600, color: '#f3f4f6', display: 'block', marginBottom: 8 }}>
+                🎯 Group Reply Trigger Mode:
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+                <div
+                  onClick={() => setGroupReplyMode('ALL')}
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                    background: groupReplyMode === 'ALL' ? 'rgba(14, 165, 233, 0.18)' : 'rgba(255, 255, 255, 0.03)',
+                    border: `1px solid ${groupReplyMode === 'ALL' ? '#38bdf8' : 'rgba(255, 255, 255, 0.08)'}`,
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <div
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: '50%',
+                        border: `2px solid ${groupReplyMode === 'ALL' ? '#38bdf8' : '#6b7280'}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {groupReplyMode === 'ALL' && <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#38bdf8' }} />}
+                    </div>
+                    <span style={{ fontSize: '0.88rem', fontWeight: 600, color: groupReplyMode === 'ALL' ? '#38bdf8' : '#fff' }}>
+                      🌐 Har Message Par Related Reply
+                    </span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--text-muted)', paddingLeft: 24 }}>
+                    Group me jo bhi baat chal rahi ho us se related aur relevant short AI reply bhejega.
+                  </p>
+                </div>
+
+                <div
+                  onClick={() => setGroupReplyMode('MENTION_ONLY')}
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                    background: groupReplyMode === 'MENTION_ONLY' ? 'rgba(14, 165, 233, 0.18)' : 'rgba(255, 255, 255, 0.03)',
+                    border: `1px solid ${groupReplyMode === 'MENTION_ONLY' ? '#38bdf8' : 'rgba(255, 255, 255, 0.08)'}`,
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <div
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: '50%',
+                        border: `2px solid ${groupReplyMode === 'MENTION_ONLY' ? '#38bdf8' : '#6b7280'}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {groupReplyMode === 'MENTION_ONLY' && <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#38bdf8' }} />}
+                    </div>
+                    <span style={{ fontSize: '0.88rem', fontWeight: 600, color: groupReplyMode === 'MENTION_ONLY' ? '#38bdf8' : '#fff' }}>
+                      🏷️ Mention & Keyword Triggers Only
+                    </span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--text-muted)', paddingLeft: 24 }}>
+                    Sirf tab reply karega jab message me bot ka @mention, naam ya trigger words shamil hon.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* 🎯 Target Groups Scope & Selective Filter */}
+            <div style={{ background: 'rgba(0, 0, 0, 0.22)', padding: '14px 16px', borderRadius: 12, border: '1px solid rgba(56, 189, 248, 0.25)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+                <div>
+                  <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#f3f4f6', display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
+                    <span>🎯 Target Groups Filter (ग्रुप सेलेक्शन):</span>
+                    <span
+                      className="label-badge"
+                      style={{
+                        background: groupTargetScope === 'SELECTED' ? 'rgba(234, 179, 8, 0.2)' : 'rgba(14, 165, 233, 0.2)',
+                        color: groupTargetScope === 'SELECTED' ? '#fde047' : '#38bdf8',
+                        borderColor: groupTargetScope === 'SELECTED' ? '#ca8a04' : '#0284c7',
+                      }}
+                    >
+                      {groupTargetScope === 'SELECTED' ? `🎯 Targeted: ${targetGroups.length} Groups` : '🌐 All Groups Allowed'}
+                    </span>
+                  </label>
+                  <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                    Aap chun sakte hain ki bot sabhi WhatsApp groups me reply kare ya sirf aapke select kiye hue specific groups me.
+                  </p>
+                </div>
+              </div>
+
+              {/* Scope Selector: All Groups vs Selected Groups Only */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, marginBottom: 14 }}>
+                <div
+                  onClick={() => handleGroupTargetScopeChange('ALL')}
+                  style={{
+                    padding: '10px 14px',
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                    background: groupTargetScope === 'ALL' ? 'rgba(14, 165, 233, 0.16)' : 'rgba(255, 255, 255, 0.03)',
+                    border: `1px solid ${groupTargetScope === 'ALL' ? '#38bdf8' : 'rgba(255, 255, 255, 0.08)'}`,
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: '50%',
+                        border: `2px solid ${groupTargetScope === 'ALL' ? '#38bdf8' : '#6b7280'}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {groupTargetScope === 'ALL' && <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#38bdf8' }} />}
+                    </div>
+                    <span style={{ fontSize: '0.84rem', fontWeight: 600, color: groupTargetScope === 'ALL' ? '#38bdf8' : '#e5e7eb' }}>
+                      🌐 All WhatsApp Groups (Sabhi Groups)
+                    </span>
+                  </div>
+                  <p style={{ margin: '4px 0 0 24px', fontSize: '0.73rem', color: 'var(--text-muted)' }}>
+                    Bot jis kisi bhi group me shamil hai, sabhi me auto-reply active rahega.
+                  </p>
+                </div>
+
+                <div
+                  onClick={() => handleGroupTargetScopeChange('SELECTED')}
+                  style={{
+                    padding: '10px 14px',
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                    background: groupTargetScope === 'SELECTED' ? 'rgba(234, 179, 8, 0.16)' : 'rgba(255, 255, 255, 0.03)',
+                    border: `1px solid ${groupTargetScope === 'SELECTED' ? '#facc15' : 'rgba(255, 255, 255, 0.08)'}`,
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: '50%',
+                        border: `2px solid ${groupTargetScope === 'SELECTED' ? '#facc15' : '#6b7280'}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {groupTargetScope === 'SELECTED' && <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#facc15' }} />}
+                    </div>
+                    <span style={{ fontSize: '0.84rem', fontWeight: 600, color: groupTargetScope === 'SELECTED' ? '#facc15' : '#e5e7eb' }}>
+                      🎯 Selected Groups Only (Sirf Chune Hue)
+                    </span>
+                  </div>
+                  <p style={{ margin: '4px 0 0 24px', fontSize: '0.73rem', color: 'var(--text-muted)' }}>
+                    Sirf aapke dwara target kiye gaye groups me reply hoga, baki groups ignore rahenge.
+                  </p>
+                </div>
+              </div>
+
+              {/* When SELECTED scope is active: Group selector & management */}
+              {groupTargetScope === 'SELECTED' && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                  {/* Target Groups Chips */}
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontSize: '0.78rem', color: '#facc15', fontWeight: 600 }}>
+                        📌 Active Target Groups ({targetGroups.length}):
+                      </span>
+                      {targetGroups.length > 0 && (
+                        <button
+                          type="button"
+                          className="chip-btn"
+                          style={{ fontSize: '0.7rem', padding: '2px 6px', color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                          onClick={handleClearAllTargets}
+                        >
+                          Clear All Targets
+                        </button>
+                      )}
+                    </div>
+
+                    {targetGroups.length === 0 ? (
+                      <div style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(234, 179, 8, 0.1)', border: '1px dashed rgba(234, 179, 8, 0.3)', color: '#fef08a', fontSize: '0.78rem' }}>
+                        ⚠️ Abhi tak koi specific group target nahi kiya gaya hai. Niche se WhatsApp groups fetch karke select karein ya manually add karein.
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {targetGroups.map((tg, idx) => (
+                          <div
+                            key={idx}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              padding: '4px 10px',
+                              borderRadius: 20,
+                              background: 'rgba(234, 179, 8, 0.18)',
+                              border: '1px solid rgba(234, 179, 8, 0.45)',
+                              color: '#fef08a',
+                              fontSize: '0.78rem',
+                            }}
+                          >
+                            <span>👥 {tg.name || tg.jid}</span>
+                            <span style={{ fontSize: '0.68rem', color: '#ca8a04' }}>
+                              ({tg.jid && tg.jid.includes('@') ? tg.jid.split('@')[0].slice(-6) + '@g.us' : tg.jid})
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveTargetGroup(idx)}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#f87171',
+                                cursor: 'pointer',
+                                padding: 0,
+                                marginLeft: 2,
+                                fontWeight: 'bold',
+                                fontSize: '0.85rem',
+                                lineHeight: 1,
+                              }}
+                              title="Remove from target list"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Fetch WhatsApp Groups Button & Live Selector */}
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                    <button
+                      type="button"
+                      onClick={handleFetchWhatsAppGroups}
+                      disabled={fetchingWhatsAppGroups}
+                      className="chip-btn"
+                      style={{
+                        padding: '6px 14px',
+                        fontSize: '0.8rem',
+                        background: 'rgba(14, 165, 233, 0.2)',
+                        borderColor: '#38bdf8',
+                        color: '#38bdf8',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        fontWeight: 600,
+                      }}
+                    >
+                      <RefreshCw size={13} className={fetchingWhatsAppGroups ? 'animate-spin' : ''} />
+                      <span>{fetchingWhatsAppGroups ? 'Fetching Groups from WhatsApp...' : '🔄 Fetch My WhatsApp Groups'}</span>
+                    </button>
+
+                    {fetchGroupsStatus && (
+                      <span style={{ fontSize: '0.78rem', color: fetchGroupsStatus.success ? '#4ade80' : '#f87171' }}>
+                        {fetchGroupsStatus.message}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Available WhatsApp Groups list (if fetched) */}
+                  {availableWhatsAppGroups.length > 0 && (
+                    <div
+                      style={{
+                        marginBottom: 12,
+                        padding: '10px 12px',
+                        background: 'rgba(0, 0, 0, 0.35)',
+                        borderRadius: 8,
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ fontSize: '0.76rem', color: '#94a3b8', fontWeight: 600 }}>
+                          Live WhatsApp Groups ({availableWhatsAppGroups.length}): Checkbox par click karke select karein
+                        </span>
+                        <input
+                          type="text"
+                          placeholder="Search group..."
+                          value={groupFilterSearch}
+                          onChange={(e) => setGroupFilterSearch(e.target.value)}
+                          className="text-input"
+                          style={{ width: 140, height: 26, fontSize: '0.74rem', padding: '2px 8px' }}
+                        />
+                      </div>
+
+                      <div style={{ maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {availableWhatsAppGroups
+                          .filter((g) => !groupFilterSearch || g.name.toLowerCase().includes(groupFilterSearch.toLowerCase()))
+                          .map((g) => {
+                            const isSelected = targetGroups.some((tg) => tg.jid === g.jid);
+                            return (
+                              <div
+                                key={g.jid}
+                                onClick={() => handleToggleTargetGroup(g)}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  padding: '6px 10px',
+                                  borderRadius: 6,
+                                  cursor: 'pointer',
+                                  background: isSelected ? 'rgba(234, 179, 8, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                                  border: `1px solid ${isSelected ? 'rgba(234, 179, 8, 0.4)' : 'transparent'}`,
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => {}}
+                                    style={{ cursor: 'pointer' }}
+                                  />
+                                  <span style={{ fontSize: '0.8rem', color: isSelected ? '#fde047' : '#e2e8f0', fontWeight: isSelected ? 600 : 400 }}>
+                                    {g.name}
+                                  </span>
+                                </div>
+                                <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                                  {g.memberCount ? `${g.memberCount} members` : ''}
+                                </span>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Manual Group Entry Form */}
+                  <div style={{ paddingTop: 8, borderTop: '1px dashed rgba(255, 255, 255, 0.08)' }}>
+                    <span style={{ fontSize: '0.74rem', color: '#94a3b8', display: 'block', marginBottom: 4 }}>
+                      Or Add Group Manually (Name ya JID daalein):
+                    </span>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <input
+                        type="text"
+                        className="text-input"
+                        value={manualGroupName}
+                        onChange={(e) => setManualGroupName(e.target.value)}
+                        placeholder="Group Name (e.g. Wasim Family Tech)"
+                        style={{ flex: 1, minWidth: 150, height: 32, fontSize: '0.78rem' }}
+                      />
+                      <input
+                        type="text"
+                        className="text-input"
+                        value={manualGroupJid}
+                        onChange={(e) => setManualGroupJid(e.target.value)}
+                        placeholder="Group JID (optional e.g. 1203630...@g.us)"
+                        style={{ flex: 1, minWidth: 150, height: 32, fontSize: '0.78rem' }}
+                      />
+                      <button
+                        type="button"
+                        className="chip-btn"
+                        onClick={handleAddManualTargetGroup}
+                        disabled={!manualGroupName.trim() && !manualGroupJid.trim()}
+                        style={{
+                          height: 32,
+                          padding: '0 12px',
+                          fontSize: '0.76rem',
+                          borderColor: '#facc15',
+                          color: '#facc15',
+                          background: 'rgba(234, 179, 8, 0.15)',
+                          fontWeight: 600,
+                        }}
+                      >
+                        + Add Target Group
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Trigger Keywords input */}
+            <div>
+              <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                🔑 Trigger Keywords (Comma separated):
+              </label>
+              <input
+                type="text"
+                className="text-input"
+                value={groupTriggerKeywords}
+                onChange={(e) => setGroupTriggerKeywords(e.target.value)}
+                placeholder="@bot, wasim, bot, bhai, help, kaha ho, suno"
+                style={{ height: 38, fontSize: '0.85rem' }}
+              />
+            </div>
+
+            {/* Anti-Spam Cooldown & Quote original */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+              <div>
+                <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                  ⏳ Anti-Spam Group Cooldown:
+                </label>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {[3, 5, 10, 15, 30].map((sec) => (
+                    <button
+                      key={sec}
+                      type="button"
+                      className={`chip-btn ${groupCooldownSeconds === sec ? 'active' : ''}`}
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: '0.76rem',
+                        background: groupCooldownSeconds === sec ? 'rgba(14, 165, 233, 0.25)' : undefined,
+                        borderColor: groupCooldownSeconds === sec ? '#38bdf8' : undefined,
+                        color: groupCooldownSeconds === sec ? '#38bdf8' : undefined,
+                      }}
+                      onClick={() => setGroupCooldownSeconds(sec)}
+                    >
+                      {sec}s Delay
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                  💬 WhatsApp Message Quoting:
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setGroupQuoteOriginal(!groupQuoteOriginal)}
+                  style={{
+                    padding: '7px 12px',
+                    borderRadius: 8,
+                    background: groupQuoteOriginal ? 'rgba(14, 165, 233, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                    border: `1px solid ${groupQuoteOriginal ? '#38bdf8' : 'rgba(255, 255, 255, 0.1)'}`,
+                    color: groupQuoteOriginal ? '#38bdf8' : '#9ca3af',
+                    fontSize: '0.8rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <Check size={14} style={{ opacity: groupQuoteOriginal ? 1 : 0.3 }} />
+                  <span>{groupQuoteOriginal ? 'Quote Sender Message (Clear Context)' : 'Normal Send (No Quote)'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Group System Prompt & Personality */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 8 }}>
+                <label style={{ fontSize: '0.82rem', fontWeight: 600, color: '#f3f4f6', margin: 0 }}>
+                  🧠 Group AI Persona & Related Reply Prompt:
+                </label>
+                <div className="preset-chips" style={{ margin: 0 }}>
+                  {GROUP_PRESETS.map((p) => (
+                    <button
+                      key={p.name}
+                      type="button"
+                      className="chip-btn"
+                      style={{ fontSize: '0.72rem', padding: '3px 8px' }}
+                      onClick={() => setGroupSystemPrompt(p.prompt)}
+                    >
+                      <Sparkles size={10} style={{ display: 'inline', marginRight: 3 }} />
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <textarea
+                className="textarea-input"
+                rows={3}
+                value={groupSystemPrompt}
+                onChange={(e) => setGroupSystemPrompt(e.target.value)}
+                placeholder="Instruction for group context and related responses..."
+                style={{ fontSize: '0.82rem' }}
+              />
+            </div>
+
+            {/* Interactive Live Group Simulator Test */}
+            <div
+              style={{
+                marginTop: 6,
+                padding: '14px 16px',
+                background: 'rgba(0, 0, 0, 0.25)',
+                border: '1px solid rgba(56, 189, 248, 0.25)',
+                borderRadius: 10,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                <Sparkles size={16} color="#38bdf8" />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#38bdf8' }}>
+                  Live Group Auto-Reply Tester (Instant Verification)
+                </span>
+              </div>
+
+              {/* Quick Preset Selector for Target Groups */}
+              {targetGroups.length > 0 && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#fde047', fontWeight: 600 }}>Quick Pick Target:</span>
+                  {targetGroups.map((tg, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className="chip-btn"
+                      style={{
+                        fontSize: '0.7rem',
+                        padding: '2px 8px',
+                        borderColor: testGroupName === tg.name ? '#facc15' : 'rgba(234, 179, 8, 0.3)',
+                        color: testGroupName === tg.name ? '#fde047' : '#fef08a',
+                        background: testGroupName === tg.name ? 'rgba(234, 179, 8, 0.25)' : undefined,
+                      }}
+                      onClick={() => setTestGroupName(tg.name)}
+                    >
+                      👥 {tg.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 10 }}>
+                <div>
+                  <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>
+                    Group Name:
+                  </label>
+                  <input
+                    type="text"
+                    className="text-input"
+                    value={testGroupName}
+                    onChange={(e) => setTestGroupName(e.target.value)}
+                    placeholder="e.g. Friends & Tech Group"
+                    style={{ height: 34, fontSize: '0.8rem' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>
+                    Group Member Name:
+                  </label>
+                  <input
+                    type="text"
+                    className="text-input"
+                    value={testGroupSender}
+                    onChange={(e) => setTestGroupSender(e.target.value)}
+                    placeholder="e.g. Aman Sharma"
+                    style={{ height: 34, fontSize: '0.8rem' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>
+                  Incoming Group Message (Koi bhi sawal ya discussion text):
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="text"
+                    className="text-input"
+                    value={testGroupMessage}
+                    onChange={(e) => setTestGroupMessage(e.target.value)}
+                    placeholder="e.g. Kal party kahan rakh rahe hain bhai log?"
+                    style={{ height: 36, fontSize: '0.84rem', flex: 1 }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleTestGroupReply();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={handleTestGroupReply}
+                    disabled={testingGroupReply || !testGroupMessage.trim()}
+                    style={{
+                      height: 36,
+                      padding: '0 14px',
+                      fontSize: '0.8rem',
+                      background: 'linear-gradient(135deg, #0284c7, #6366f1)',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Play size={13} />
+                    <span>{testingGroupReply ? 'Generating Reply...' : 'Test Reply'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {groupTestResult && (
+                <div
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: 8,
+                    background: groupTestResult.success ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                    border: `1px solid ${groupTestResult.success ? '#22c55e' : '#ef4444'}`,
+                    marginTop: 8,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: groupTestResult.success ? '#4ade80' : '#f87171' }}>
+                      {groupTestResult.success ? '✅ Related Group AI Reply Dispatched:' : '❌ Reply Not Sent:'}
+                    </span>
+                    {groupTestResult.provider && (
+                      <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}>AI Model: {groupTestResult.provider}</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '0.86rem', color: '#fff', fontStyle: 'italic', background: 'rgba(0,0,0,0.3)', padding: '8px 12px', borderRadius: 6 }}>
+                    "{groupTestResult.replyText || groupTestResult.message || groupTestResult.error}"
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 🛡️ Anti-Ban & Human Simulation Protection Shield */}

@@ -114,6 +114,7 @@ let currentQrCode = null;
 let connectionStatus = 'disconnected'; // 'disconnected' | 'qr_ready' | 'connecting' | 'connected'
 let connectedPhoneNumber = null;
 let isInitializing = false;
+const groupCooldownMap = new Map();
 
 const authPath = path.resolve(__dirname, '../../auth_info_baileys');
 
@@ -374,14 +375,13 @@ async function initBaileys(forceRestart = false) {
           continue;
         }
 
-        // Skip invalid messages, status broadcasts, newsletters/channels, and group chats
+        // Skip invalid messages, status broadcasts, newsletters/channels
         if (
           !msg.message ||
           !senderJid ||
           senderJid === 'status@broadcast' ||
           senderJid.endsWith('@broadcast') ||
-          senderJid.endsWith('@newsletter') ||
-          senderJid.endsWith('@g.us')
+          senderJid.endsWith('@newsletter')
         ) {
           continue;
         }
@@ -421,6 +421,119 @@ async function initBaileys(forceRestart = false) {
           if (!settings.isEnabled) {
             console.log(`[Baileys] Bot is currently disabled in settings. Skipping reply.`);
             continue;
+          }
+
+          const isGroup = Boolean(senderJid && senderJid.endsWith('@g.us'));
+
+          // 👥 WHATSAPP GROUP AUTO-REPLY PIPELINE
+          if (isGroup) {
+            if (!settings.groupAutoReplyEnabled) {
+              console.log(`[Baileys Group] 👥 Group message in ${senderJid} ignored: Group Auto-Reply is DISABLED.`);
+              continue;
+            }
+
+            // 🎯 Target Groups Filter (Target Selected Groups Only)
+            if (settings.groupTargetScope === 'SELECTED') {
+              const targetList = Array.isArray(settings.targetGroups) ? settings.targetGroups : [];
+              const isTargeted = targetList.some((tg) => {
+                if (!tg || tg.isEnabled === false) return false;
+                const cleanJid = (tg.jid || '').trim().toLowerCase();
+                const cleanName = (tg.name || '').trim().toLowerCase();
+                const incomingJid = senderJid.toLowerCase();
+                return cleanJid === incomingJid || (cleanName && cleanName === incomingJid);
+              });
+
+              if (!isTargeted) {
+                console.log(`[Baileys Group] 🔒 Message in ${senderJid} ignored (Group is NOT in your Selected Target Groups list).`);
+                continue;
+              }
+            }
+
+            // Anti-Spam / Cooldown check per group JID
+            const lastGroupReply = groupCooldownMap.get(senderJid) || 0;
+            const cooldownMs = (settings.groupCooldownSeconds || 5) * 1000;
+            if (Date.now() - lastGroupReply < cooldownMs) {
+              console.log(`[Baileys Group] ⏳ Cooldown active for group ${senderJid} (${Math.round((cooldownMs - (Date.now() - lastGroupReply)) / 1000)}s left). Skipping to prevent group flooding.`);
+              continue;
+            }
+
+            const participantJid = msg.key?.participant || msg.participant || '';
+            const participantPhone = participantJid ? participantJid.split('@')[0] : 'group_member';
+            const senderName = msg.pushName || participantPhone;
+
+            // Check Group Reply Mode (ALL vs MENTION_ONLY)
+            if (settings.groupReplyMode === 'MENTION_ONLY') {
+              const mentionedJids = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+              const botDigits = (connectedPhoneNumber || '').replace(/\D/g, '');
+              const isMentioned = Boolean(botDigits && mentionedJids.some((j) => j.includes(botDigits)));
+              const lowerText = messageText.toLowerCase();
+              const triggers = (settings.groupTriggerKeywords || ['@bot', 'wasim', 'bot', 'bhai', 'help', 'kaha ho', 'suno'])
+                .map((k) => k.toLowerCase().trim())
+                .filter(Boolean);
+              const hasTrigger = triggers.some((t) => lowerText.includes(t));
+              const isQuotingBot = Boolean(
+                botDigits &&
+                msg.message?.extendedTextMessage?.contextInfo?.participant?.includes(botDigits)
+              );
+
+              if (!isMentioned && !hasTrigger && !isQuotingBot) {
+                console.log(`[Baileys Group] ℹ️ Group message in ${senderJid} skipped (Mention/Keyword Mode active, no trigger matched).`);
+                continue;
+              }
+            }
+
+            console.log(`[Baileys Group] 🚀 Processing incoming group message in ${senderJid} from ${senderName}: "${messageText}"`);
+
+            try {
+              // Human Presence: Mark read and show composing status
+              await sock.readMessages([msg.key]).catch(() => {});
+              await sock.sendPresenceUpdate('composing', senderJid).catch(() => {});
+
+              const groupPrompt = `${
+                settings.groupSystemPrompt ||
+                'Tum WhatsApp group ke ek sensible, helpful aur active member ho. Group conversation ko samajh kar bilkul relevant/related, short (1-2 sentences) aur natural jawab do. Desi Hinglish ya Hindi me reply karo jaise group me log baat karte hain. Kabhi faltu lambe robotic bhashan mat do aur na hi spam karo.'
+              }\n\nGroup Context:\n- Group ID: ${senderJid}\n- Sender: ${senderName} (${participantPhone})\n- Incoming Group Message: "${messageText}"\n- Tone & Style: Group conversation se bilkul related, natural aur short (1-2 lines) reply do.`;
+
+              const chatHistory = await getGeminiChatHistory(`group_${senderJid}`).catch(() => []);
+              const aiResult = await routeAndGenerateAiReply({
+                userMessage: `${senderName}: ${messageText}`,
+                senderPhone: `group_${senderJid}`,
+                dynamicPrompt: groupPrompt,
+                chatHistory,
+                mediaPayload: null,
+              });
+
+              let replyText = aiResult.replyText;
+
+              // Human typing simulation pause
+              const typingWait = Math.min(2500, Math.max(1000, replyText.length * 25));
+              await new Promise((resolve) => setTimeout(resolve, typingWait));
+              await sock.sendPresenceUpdate('paused', senderJid).catch(() => {});
+
+              // Dispatch related reply to group (quoting sender's message)
+              const sendOptions = settings.groupQuoteOriginal !== false ? { quoted: msg } : {};
+              await sock.sendMessage(senderJid, { text: replyText }, sendOptions);
+              groupCooldownMap.set(senderJid, Date.now());
+
+              console.log(`[Baileys Group] ✅ Group auto-reply delivered to ${senderJid}: "${replyText.substring(0, 60)}..."`);
+
+              // Save audit log & context
+              await MessageLog.create({
+                sender: `${senderName} [Group: ${senderJid}]`,
+                messageIn: messageText,
+                messageOut: replyText,
+                status: 'GROUP_REPLY_SENT',
+                routingCategory: 'GROUP_CHAT',
+                routingIntent: settings.groupReplyMode === 'MENTION_ONLY' ? 'GROUP_MENTION_TRIGGER' : 'GROUP_AUTO_REPLY',
+                metaMessageId: msg.key?.id || `baileys_grp_${Date.now()}`,
+              });
+
+              await recordMessageExchange(`group_${senderJid}`, `${senderName}: ${messageText}`, replyText).catch(() => {});
+            } catch (grpErr) {
+              console.error('[Baileys Group] Error generating/sending group reply:', grpErr.message);
+            }
+
+            continue; // Group message handled! Proceed to next message
           }
 
           const cleanSender = senderPhone.replace(/\D/g, '');
@@ -1376,12 +1489,54 @@ async function restartBaileysSocket() {
     connectionStatus = 'disconnected';
     isInitializing = false;
     currentQrCode = null;
-    // Re-initialize socket
     await initBaileys(true);
     return { success: true, message: 'Baileys socket reinitialized' };
   } catch (err) {
     console.error('[Baileys] Error during socket restart:', err.message);
     throw err;
+  }
+}
+
+/**
+ * Fetches all participating WhatsApp groups with metadata (JID, subject/name, participant count)
+ */
+async function getParticipatingGroups() {
+  if (!sock || connectionStatus !== 'connected') {
+    return {
+      success: false,
+      connected: false,
+      message: 'WhatsApp Web is not currently connected. Please link your WhatsApp via QR code first.',
+      groups: [],
+    };
+  }
+
+  try {
+    const groupsData = await sock.groupFetchAllParticipating();
+    const groupsList = Object.values(groupsData).map((g) => ({
+      jid: g.id,
+      name: g.subject || 'Unnamed Group',
+      creation: g.creation,
+      memberCount: Array.isArray(g.participants) ? g.participants.length : 0,
+      desc: typeof g.desc === 'string' ? g.desc : '',
+    }));
+
+    // Sort alphabetically by group name
+    groupsList.sort((a, b) => a.name.localeCompare(b.name));
+
+    return {
+      success: true,
+      connected: true,
+      count: groupsList.length,
+      groups: groupsList,
+    };
+  } catch (err) {
+    console.error('[Baileys] Error fetching participating groups:', err.message);
+    return {
+      success: false,
+      connected: true,
+      error: err.message,
+      groups: [],
+    };
   }
 }
 
@@ -1391,4 +1546,5 @@ module.exports = {
   logout,
   sendBaileysMessage,
   restartBaileysSocket,
+  getParticipatingGroups,
 };

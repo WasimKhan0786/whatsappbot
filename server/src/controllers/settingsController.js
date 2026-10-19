@@ -95,6 +95,7 @@ const {
   synthesizeVoiceNote,
   transcribeAudioWithDeepgram,
 } = require('../services/speechService');
+const { getParticipatingGroups } = require('../services/baileysService');
 
 
 /**
@@ -140,6 +141,14 @@ const getSettings = async (req, res) => {
         newsDefaultCountry: settings.newsDefaultCountry || 'in',
         newsDefaultLanguage: settings.newsDefaultLanguage || 'en',
         newsMaxArticles: settings.newsMaxArticles || 3,
+        groupAutoReplyEnabled: settings.groupAutoReplyEnabled ?? false,
+        groupReplyMode: settings.groupReplyMode || 'ALL',
+        groupTriggerKeywords: settings.groupTriggerKeywords || ['@bot', 'wasim', 'bot', 'bhai', 'help', 'kaha ho', 'suno'],
+        groupSystemPrompt: settings.groupSystemPrompt || 'Tum WhatsApp group ke ek sensible, helpful aur active member ho. Group members aapas me jo bhi baat kar rahe hain ya sawal puch rahe hain, conversation ko samajh kar bilkul relevant/related, short (1-2 sentences) aur natural jawab do. Desi Hinglish ya Hindi me reply karo jaise group me log baat karte hain. Kabhi faltu lambe robotic bhashan mat do aur na hi spam karo.',
+        groupCooldownSeconds: settings.groupCooldownSeconds ?? 5,
+        groupQuoteOriginal: settings.groupQuoteOriginal ?? true,
+        groupTargetScope: settings.groupTargetScope || 'ALL',
+        targetGroups: settings.targetGroups || [],
         activeSessionDate: getTodayDateString(),
         updatedAt: settings.updatedAt,
       },
@@ -196,6 +205,14 @@ const updateSettings = async (req, res) => {
       newsDefaultCountry,
       newsDefaultLanguage,
       newsMaxArticles,
+      groupAutoReplyEnabled,
+      groupReplyMode,
+      groupTriggerKeywords,
+      groupSystemPrompt,
+      groupCooldownSeconds,
+      groupQuoteOriginal,
+      groupTargetScope,
+      targetGroups,
     } = req.body;
 
     const settings = await BotSettings.getSettings();
@@ -300,6 +317,44 @@ const updateSettings = async (req, res) => {
       settings.newsMaxArticles = Math.min(10, Math.max(1, newsMaxArticles));
     }
 
+    if (typeof groupAutoReplyEnabled === 'boolean') {
+      settings.groupAutoReplyEnabled = groupAutoReplyEnabled;
+    }
+
+    if (typeof groupReplyMode === 'string' && ['ALL', 'MENTION_ONLY'].includes(groupReplyMode.toUpperCase())) {
+      settings.groupReplyMode = groupReplyMode.toUpperCase();
+    }
+
+    if (Array.isArray(groupTriggerKeywords)) {
+      settings.groupTriggerKeywords = groupTriggerKeywords.map((k) => String(k).trim()).filter(Boolean);
+    }
+
+    if (typeof groupSystemPrompt === 'string') {
+      settings.groupSystemPrompt = groupSystemPrompt.trim();
+    }
+
+    if (typeof groupCooldownSeconds === 'number') {
+      settings.groupCooldownSeconds = Math.max(1, Math.min(120, groupCooldownSeconds));
+    }
+
+    if (typeof groupQuoteOriginal === 'boolean') {
+      settings.groupQuoteOriginal = groupQuoteOriginal;
+    }
+
+    if (typeof groupTargetScope === 'string' && ['ALL', 'SELECTED'].includes(groupTargetScope.toUpperCase())) {
+      settings.groupTargetScope = groupTargetScope.toUpperCase();
+    }
+
+    if (Array.isArray(targetGroups)) {
+      settings.targetGroups = targetGroups
+        .filter((g) => g && (g.jid || g.name))
+        .map((g) => ({
+          jid: String(g.jid || '').trim(),
+          name: String(g.name || '').trim(),
+          isEnabled: g.isEnabled !== false,
+        }));
+    }
+
     settings.updatedAt = new Date();
     await settings.save();
 
@@ -331,6 +386,14 @@ const updateSettings = async (req, res) => {
         newsDefaultCountry: settings.newsDefaultCountry,
         newsDefaultLanguage: settings.newsDefaultLanguage,
         newsMaxArticles: settings.newsMaxArticles,
+        groupAutoReplyEnabled: settings.groupAutoReplyEnabled,
+        groupReplyMode: settings.groupReplyMode,
+        groupTriggerKeywords: settings.groupTriggerKeywords,
+        groupSystemPrompt: settings.groupSystemPrompt,
+        groupCooldownSeconds: settings.groupCooldownSeconds,
+        groupQuoteOriginal: settings.groupQuoteOriginal,
+        groupTargetScope: settings.groupTargetScope,
+        targetGroups: settings.targetGroups,
         updatedAt: settings.updatedAt,
       },
     });
@@ -407,6 +470,26 @@ const simulateIncoming = async (req, res) => {
         message: 'The bot is currently disabled via dashboard switch.',
         log,
       });
+    }
+
+    // 1.5 Check if simulating a WhatsApp Group message
+    const isGroupSim = Boolean(req.body.isGroup || String(sender).endsWith('@g.us') || String(sender).startsWith('group_'));
+    if (isGroupSim) {
+      if (!settings.groupAutoReplyEnabled) {
+        const log = await MessageLog.create({
+          sender: `${req.body.senderName || 'Group Member'} [Group: ${sender}]`,
+          messageIn: messageText,
+          messageOut: '[Group Auto-Reply Disabled]',
+          status: 'BOT_DISABLED',
+        });
+        return res.json({
+          success: false,
+          status: 'GROUP_DISABLED',
+          message: 'WhatsApp Group Auto-Reply is currently DISABLED in settings.',
+          log,
+        });
+      }
+      return testGroupReply(req, res);
     }
 
     // 2. Check Allowed Phone Number & WhitelistContact Filter
@@ -1411,6 +1494,139 @@ const testSpeechEndpoint = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/settings/test-group-reply
+ * Test real-time group auto-reply pipeline
+ */
+const testGroupReply = async (req, res) => {
+  try {
+    const {
+      groupJid = '120363023456789012@g.us',
+      groupName = 'Wasim Tech Family',
+      senderName = 'Aman Sharma',
+      senderPhone = '+919876543210',
+      messageText,
+    } = req.body;
+
+    if (!messageText || !messageText.trim()) {
+      return res.status(400).json({ error: 'Message text is required for group reply simulation.' });
+    }
+
+    const settings = await BotSettings.getSettings();
+
+    if (!settings.isEnabled) {
+      return res.json({
+        success: false,
+        status: 'BOT_DISABLED',
+        message: 'Master Bot is currently disabled via dashboard switch.',
+      });
+    }
+
+    if (!settings.groupAutoReplyEnabled) {
+      return res.json({
+        success: false,
+        status: 'GROUP_DISABLED',
+        message: 'WhatsApp Group Auto-Reply feature is currently DISABLED. Please turn ON the toggle in the dashboard.',
+      });
+    }
+
+    // Check Target Groups Filter if in SELECTED scope
+    if (settings.groupTargetScope === 'SELECTED') {
+      const targetList = Array.isArray(settings.targetGroups) ? settings.targetGroups : [];
+      const isTargeted = targetList.some((tg) => {
+        if (!tg || tg.isEnabled === false) return false;
+        const cleanJid = (tg.jid || '').trim().toLowerCase();
+        const cleanName = (tg.name || '').trim().toLowerCase();
+        const incomingJid = (groupJid || '').toLowerCase();
+        const incomingName = (groupName || '').toLowerCase().trim();
+        return (cleanJid && cleanJid === incomingJid) || (cleanName && cleanName === incomingName);
+      });
+
+      if (!isTargeted) {
+        return res.json({
+          success: false,
+          status: 'SKIPPED_NOT_TARGET_GROUP',
+          message: `Group "${groupName || groupJid}" is not in your Selected Target Groups list. In "Selected Groups Only" mode, the bot only responds to chosen target groups.`,
+        });
+      }
+    }
+
+    // Check Mention Mode
+    if (settings.groupReplyMode === 'MENTION_ONLY') {
+      const lower = messageText.toLowerCase();
+      const triggers = (settings.groupTriggerKeywords || ['@bot', 'wasim', 'bot', 'bhai', 'help', 'kaha ho', 'suno']).map((k) =>
+        k.toLowerCase().trim()
+      ).filter(Boolean);
+      const matched = triggers.some((t) => lower.includes(t));
+      if (!matched) {
+        return res.json({
+          success: false,
+          status: 'SKIPPED_NOT_MENTIONED',
+          message: `Group is set to "Mention / Trigger Only" mode. Incoming message did not contain any trigger keyword (${triggers.join(', ')}).`,
+        });
+      }
+    }
+
+    const groupPrompt = `${
+      settings.groupSystemPrompt ||
+      'Tum WhatsApp group ke ek sensible, helpful aur active member ho. Group conversation ko samajh kar bilkul relevant/related, short (1-2 sentences) aur natural jawab do. Desi Hinglish ya Hindi me reply karo jaise group me log baat karte hain. Kabhi faltu lambe robotic bhashan mat do aur na hi spam karo.'
+    }\n\nGroup Context:\n- Group Name: ${groupName}\n- Group JID: ${groupJid}\n- Sender: ${senderName} (${senderPhone})\n- Incoming Group Message: "${messageText}"\n- Tone & Style: Incoming message se bilkul match aur relevant short reply do.`;
+
+    const chatHistory = await getGeminiChatHistory(`group_${groupJid}`).catch(() => []);
+    const aiResult = await routeAndGenerateAiReply({
+      userMessage: `${senderName}: ${messageText}`,
+      senderPhone: `group_${groupJid}`,
+      dynamicPrompt: groupPrompt,
+      chatHistory,
+      mediaPayload: null,
+    });
+
+    const replyText = aiResult.replyText;
+
+    const log = await MessageLog.create({
+      sender: `${senderName} [Group: ${groupName || groupJid}]`,
+      messageIn: messageText,
+      messageOut: replyText,
+      status: 'GROUP_REPLY_SENT',
+      routingCategory: 'GROUP_CHAT',
+      routingIntent: settings.groupReplyMode === 'MENTION_ONLY' ? 'GROUP_MENTION_TRIGGER' : 'GROUP_AUTO_REPLY',
+      metaMessageId: `sim_group_${Date.now()}`,
+    });
+
+    await recordMessageExchange(`group_${groupJid}`, `${senderName}: ${messageText}`, replyText).catch(() => {});
+
+    return res.json({
+      success: true,
+      status: 'GROUP_REPLY_SENT',
+      groupName,
+      groupJid,
+      senderName,
+      messageIn: messageText,
+      replyText,
+      quoted: settings.groupQuoteOriginal !== false,
+      provider: aiResult.provider,
+      log,
+    });
+  } catch (error) {
+    console.error('Error in testGroupReply:', error);
+    res.status(500).json({ error: error.message || 'Failed to simulate group reply' });
+  }
+};
+
+/**
+ * GET /api/settings/whatsapp-groups
+ * Returns participating WhatsApp groups from active Baileys socket
+ */
+const getConnectedWhatsAppGroups = async (req, res) => {
+  try {
+    const result = await getParticipatingGroups();
+    res.json(result);
+  } catch (error) {
+    console.error('Error in getConnectedWhatsAppGroups:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to fetch WhatsApp groups' });
+  }
+};
+
 module.exports = {
   getSettings,
   updateSettings,
@@ -1444,6 +1660,8 @@ module.exports = {
   testFinanceEndpoint,
   testRecipeEndpoint,
   testSpeechEndpoint,
+  testGroupReply,
+  getConnectedWhatsAppGroups,
 };
 
 

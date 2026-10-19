@@ -30,6 +30,7 @@ const messageLogSchema = new mongoose.Schema({
       'PAUSED_OWNER_ACTIVE',
       'CAP_REACHED',
       'NEWS_FETCHED',
+      'GROUP_REPLY_SENT',
     ],
     default: 'PROCESSED',
     index: true,
@@ -48,7 +49,7 @@ const messageLogSchema = new mongoose.Schema({
   },
   routingCategory: {
     type: String,
-    enum: ['ROUTINE', 'COMPLEX', 'SCHEDULE', 'GAME', 'HANDOFF', 'SIMULATED', 'PROFANITY', 'IMAGE_GEN', 'OWNER_ACTIVE', 'NEWS', 'UNKNOWN'],
+    enum: ['ROUTINE', 'COMPLEX', 'SCHEDULE', 'GAME', 'HANDOFF', 'SIMULATED', 'PROFANITY', 'IMAGE_GEN', 'OWNER_ACTIVE', 'NEWS', 'GROUP_CHAT', 'GROUP_AUTO_REPLY', 'UNKNOWN'],
     default: 'COMPLEX',
     index: true,
   },

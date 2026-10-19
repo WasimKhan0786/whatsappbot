@@ -146,6 +146,44 @@ const botSettingsSchema = new mongoose.Schema({
     type: Number,
     default: 4,
   },
+  groupAutoReplyEnabled: {
+    type: Boolean,
+    default: false,
+  },
+  groupReplyMode: {
+    type: String,
+    enum: ['ALL', 'MENTION_ONLY'],
+    default: 'ALL',
+  },
+  groupTriggerKeywords: {
+    type: [String],
+    default: ['@bot', 'wasim', 'bot', 'bhai', 'help', 'kaha ho', 'suno'],
+  },
+  groupSystemPrompt: {
+    type: String,
+    default:
+      'Tum WhatsApp group ke ek sensible, helpful aur active member ho. Group members aapas me jo bhi baat kar rahe hain ya sawal puch rahe hain, conversation ko samajh kar bilkul relevant/related, short (1-2 sentences) aur natural jawab do. Desi Hinglish ya Hindi me reply karo jaise group me log baat karte hain. Kabhi faltu lambe robotic bhashan mat do aur na hi spam karo.',
+  },
+  groupCooldownSeconds: {
+    type: Number,
+    default: 5,
+  },
+  groupQuoteOriginal: {
+    type: Boolean,
+    default: true,
+  },
+  groupTargetScope: {
+    type: String,
+    enum: ['ALL', 'SELECTED'],
+    default: 'ALL',
+  },
+  targetGroups: [
+    {
+      jid: { type: String, required: true },
+      name: { type: String, default: '' },
+      isEnabled: { type: Boolean, default: true },
+    },
+  ],
   updatedAt: {
     type: Date,
     default: Date.now,
@@ -179,9 +217,51 @@ botSettingsSchema.statics.getSettings = async function () {
       newsDefaultCountry: 'in',
       newsDefaultLanguage: 'en',
       newsMaxArticles: 3,
+      groupAutoReplyEnabled: false,
+      groupReplyMode: 'ALL',
+      groupTriggerKeywords: ['@bot', 'wasim', 'bot', 'bhai', 'help', 'kaha ho', 'suno'],
+      groupSystemPrompt:
+        'Tum WhatsApp group ke ek sensible, helpful aur active member ho. Group members aapas me jo bhi baat kar rahe hain ya sawal puch rahe hain, conversation ko samajh kar bilkul relevant/related, short (1-2 sentences) aur natural jawab do. Desi Hinglish ya Hindi me reply karo jaise group me log baat karte hain. Kabhi faltu lambe robotic bhashan mat do aur na hi spam karo.',
+      groupCooldownSeconds: 5,
+      groupQuoteOriginal: true,
+      groupTargetScope: 'ALL',
+      targetGroups: [],
     });
   } else {
     let needsSave = false;
+    if (settings.groupAutoReplyEnabled === undefined) {
+      settings.groupAutoReplyEnabled = false;
+      needsSave = true;
+    }
+    if (!settings.groupTargetScope) {
+      settings.groupTargetScope = 'ALL';
+      needsSave = true;
+    }
+    if (!Array.isArray(settings.targetGroups)) {
+      settings.targetGroups = [];
+      needsSave = true;
+    }
+    if (!settings.groupReplyMode) {
+      settings.groupReplyMode = 'ALL';
+      needsSave = true;
+    }
+    if (!settings.groupTriggerKeywords || settings.groupTriggerKeywords.length === 0) {
+      settings.groupTriggerKeywords = ['@bot', 'wasim', 'bot', 'bhai', 'help', 'kaha ho', 'suno'];
+      needsSave = true;
+    }
+    if (!settings.groupSystemPrompt) {
+      settings.groupSystemPrompt =
+        'Tum WhatsApp group ke ek sensible, helpful aur active member ho. Group members aapas me jo bhi baat kar rahe hain ya sawal puch rahe hain, conversation ko samajh kar bilkul relevant/related, short (1-2 sentences) aur natural jawab do. Desi Hinglish ya Hindi me reply karo jaise group me log baat karte hain. Kabhi faltu lambe robotic bhashan mat do aur na hi spam karo.';
+      needsSave = true;
+    }
+    if (settings.groupCooldownSeconds === undefined) {
+      settings.groupCooldownSeconds = 5;
+      needsSave = true;
+    }
+    if (settings.groupQuoteOriginal === undefined) {
+      settings.groupQuoteOriginal = true;
+      needsSave = true;
+    }
     if (settings.autoReplyAll === undefined) {
       settings.autoReplyAll = false;
       needsSave = true;

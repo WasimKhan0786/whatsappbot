@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Header from './components/Header';
 import StatsBar from './components/StatsBar';
 import BotControls from './components/BotControls';
@@ -14,6 +14,7 @@ import EnvConfigModal from './components/EnvConfigModal';
 import LiveAgentHandoffCard from './components/LiveAgentHandoffCard';
 import CrmLeadBoard from './components/CrmLeadBoard';
 import LocationManager from './components/LocationManager';
+import GroupManager from './components/GroupManager';
 import CollapsibleSection from './components/CollapsibleSection';
 import {
   Sparkles,
@@ -24,6 +25,7 @@ import {
   Calendar,
   Sliders,
   MessageSquare,
+  MessagesSquare,
   HelpCircle,
   Eye,
   EyeOff,
@@ -56,6 +58,8 @@ export default function App() {
     setIsEventModalOpen(true);
   };
 
+  const isUpdatingRef = useRef(false);
+
   // Fetch whitelist contacts
   const fetchContacts = useCallback(async () => {
     try {
@@ -70,14 +74,18 @@ export default function App() {
 
   // Fetch settings & statistics
   const fetchSettings = useCallback(async () => {
+    // If currently saving/updating settings, skip polling settings to avoid race condition overwrite
+    if (isUpdatingRef.current) return null;
     try {
       const res = await fetch('/api/settings');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setSettings(data.settings);
-      setStats(data.stats);
-      setEnvStatus(data.envStatus);
-      setServerOnline(true);
+      if (!isUpdatingRef.current) {
+        setSettings(data.settings);
+        setStats(data.stats);
+        setEnvStatus(data.envStatus);
+        setServerOnline(true);
+      }
       return data;
     } catch (err) {
       console.error('Failed to load settings:', err);
@@ -118,9 +126,12 @@ export default function App() {
     return () => clearInterval(interval);
   }, [fetchSettings, fetchLogs, fetchContacts]);
 
-  // Update settings handler
+  // Update settings handler with optimistic update and concurrency lock
   const handleUpdateSettings = async (newSettings) => {
+    isUpdatingRef.current = true;
     setUpdating(true);
+    // Optimistically update React state immediately so UI never flickers or reverts
+    setSettings((prev) => ({ ...(prev || {}), ...newSettings }));
     try {
       const res = await fetch('/api/settings', {
         method: 'PUT',
@@ -137,6 +148,10 @@ export default function App() {
       return false;
     } finally {
       setUpdating(false);
+      // Brief safety delay so overlapping background pollers don't revert state
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+      }, 1000);
     }
   };
 
@@ -171,6 +186,15 @@ export default function App() {
     await handleUpdateSettings({ autoReplyAll: nextVal });
   };
 
+  // Instant WhatsApp Group Auto-Reply toggle handler
+  const handleToggleGroupAutoReply = async () => {
+    const currentVal = settings?.groupAutoReplyEnabled ?? false;
+    const nextVal = !currentVal;
+    // Optimistic UI update
+    setSettings((prev) => (prev ? { ...prev, groupAutoReplyEnabled: nextVal } : prev));
+    await handleUpdateSettings({ groupAutoReplyEnabled: nextVal });
+  };
+
   return (
     <div className="app-container">
       {/* Header */}
@@ -178,6 +202,8 @@ export default function App() {
         isEnabled={settings?.isEnabled ?? true}
         autoReplyAll={settings?.autoReplyAll ?? false}
         onToggleAutoReplyAll={handleToggleAutoReplyAll}
+        groupAutoReplyEnabled={settings?.groupAutoReplyEnabled ?? false}
+        onToggleGroupAutoReply={handleToggleGroupAutoReply}
         serverOnline={serverOnline}
         onRefresh={handleRefresh}
         onOpenSimulator={() => setIsSimulatorOpen(true)}
@@ -242,6 +268,36 @@ export default function App() {
           >
             <Calendar size={15} />
             <span>Smart Schedules</span>
+          </button>
+
+          <button
+            type="button"
+            className={`studio-nav-tab ${activeStudioTab === 'GROUPS' ? 'active' : ''}`}
+            onClick={() => setActiveStudioTab('GROUPS')}
+          >
+            <MessagesSquare size={15} />
+            <span>WhatsApp Groups</span>
+            <span
+              className="nav-badge"
+              style={{
+                background: settings?.groupAutoReplyEnabled
+                  ? settings?.groupTargetScope === 'SELECTED'
+                    ? 'rgba(234, 179, 8, 0.2)'
+                    : 'rgba(14, 165, 233, 0.2)'
+                  : 'rgba(148, 163, 184, 0.15)',
+                color: settings?.groupAutoReplyEnabled
+                  ? settings?.groupTargetScope === 'SELECTED'
+                    ? '#fde047'
+                    : '#38bdf8'
+                  : '#94a3b8',
+              }}
+            >
+              {settings?.groupAutoReplyEnabled
+                ? settings?.groupTargetScope === 'SELECTED'
+                  ? `🎯 ${settings?.targetGroups?.length || 0}`
+                  : 'Active'
+                : 'Off'}
+            </span>
           </button>
 
           <button
@@ -439,6 +495,42 @@ export default function App() {
               <SetupGuide envStatus={envStatus} />
             </CollapsibleSection>
           </>
+        )}
+
+        {/* Module 7: WhatsApp Groups Studio */}
+        {(activeStudioTab === 'GROUPS' || activeStudioTab === 'ALL') && (
+          <CollapsibleSection
+            title="WhatsApp Group Auto-Reply & Selective Targeting"
+            icon={MessagesSquare}
+            storageKey="groups"
+            defaultOpen={true}
+            badge={
+              settings?.groupAutoReplyEnabled ? (
+                <span
+                  style={{
+                    fontSize: '0.73rem',
+                    background: 'rgba(14,165,233,0.15)',
+                    color: '#38bdf8',
+                    padding: '2px 8px',
+                    borderRadius: 10,
+                    fontWeight: 600,
+                  }}
+                >
+                  {settings?.groupTargetScope === 'SELECTED'
+                    ? `🎯 ${settings?.targetGroups?.length || 0} Targets`
+                    : '🌐 All Groups Active'}
+                </span>
+              ) : null
+            }
+            subtitle="Target specific WhatsApp groups, live groups fetcher, smart prompt, and anti-spam protection"
+          >
+            <GroupManager
+              settings={settings}
+              onUpdateSettings={handleUpdateSettings}
+              updating={updating}
+              logs={logs}
+            />
+          </CollapsibleSection>
         )}
       </div>
 

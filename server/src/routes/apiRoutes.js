@@ -33,6 +33,8 @@ const {
   testFinanceEndpoint,
   testRecipeEndpoint,
   testSpeechEndpoint,
+  testGroupReply,
+  getConnectedWhatsAppGroups,
 } = require('../controllers/settingsController');
 
 const {
@@ -60,6 +62,8 @@ router.get('/quota', getGeminiQuota);
 router.get('/settings', getSettings);
 router.put('/settings', updateSettings);
 router.post('/settings/reset-all-counters', resetAllMessageCounters);
+router.post('/settings/test-group-reply', testGroupReply);
+router.get('/settings/whatsapp-groups', getConnectedWhatsAppGroups);
 
 // Whitelist Contacts & Relationship Management
 router.get('/whitelist', getContacts);

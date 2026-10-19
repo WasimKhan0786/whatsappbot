@@ -13,12 +13,15 @@ import {
   Clock,
   Cpu,
   ArrowUpRight,
+  Users,
 } from 'lucide-react';
 
 export default function Header({
   isEnabled,
   autoReplyAll = false,
   onToggleAutoReplyAll,
+  groupAutoReplyEnabled = false,
+  onToggleGroupAutoReply,
   serverOnline,
   onRefresh,
   onOpenSimulator,
@@ -153,6 +156,42 @@ export default function Header({
             aria-label="Toggle Global Auto-Reply All"
             style={{
               background: autoReplyAll ? '#6366f1' : undefined,
+            }}
+          >
+            <span className="toggle-knob"></span>
+          </button>
+        </div>
+
+        {/* WhatsApp Group Auto-Reply Toggle Switch */}
+        <div
+          id="header-group-auto-reply-toggle"
+          className={`global-toggle-pill ${groupAutoReplyEnabled ? 'active' : 'inactive'}`}
+          title={
+            groupAutoReplyEnabled
+              ? 'Group Auto-Reply: ENABLED (Auto-replying to WhatsApp Group messages)'
+              : 'Group Auto-Reply: DISABLED'
+          }
+        >
+          <div className="global-toggle-indicator">
+            <Users size={14} color={groupAutoReplyEnabled ? '#38bdf8' : '#9ca3af'} />
+            <span className="global-toggle-text">
+              Group AI:{' '}
+              <strong style={{ color: groupAutoReplyEnabled ? '#7dd3fc' : '#9ca3af' }}>
+                {groupAutoReplyEnabled ? 'ON' : 'OFF'}
+              </strong>
+            </span>
+          </div>
+          <button
+            id="header-group-auto-reply-btn"
+            type="button"
+            className={`toggle-switch small ${groupAutoReplyEnabled ? 'on' : ''}`}
+            onClick={onToggleGroupAutoReply}
+            disabled={updating}
+            role="switch"
+            aria-checked={groupAutoReplyEnabled}
+            aria-label="Toggle WhatsApp Group Auto-Reply"
+            style={{
+              background: groupAutoReplyEnabled ? '#0284c7' : undefined,
             }}
           >
             <span className="toggle-knob"></span>
